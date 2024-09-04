@@ -74,7 +74,7 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
-Package: libweston-13-0
+Package: libweston-14-0
 Section: libs
 Architecture: linux-any
 Multi-Arch: same
@@ -91,13 +91,13 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-13-dev
+Package: libweston-14-dev
 Section: libdevel
 Architecture: linux-any
 Multi-Arch: same
 Depends: libpixman-1-dev,
          libwayland-dev,
-         libweston-13-0 (= ${binary:Version}),
+         libweston-14-0 (= ${binary:Version}),
          libxkbcommon-dev,
          ${misc:Depends},
          ${shlibs:Depends}

@@ -5,6 +5,7 @@ weston (14.0.0-1~exp1) UNRELEASED; urgency=medium
       no longer required.
   * Add new Build-Deps: libdisplay-info-dev
   * Bump SONAME to libweston-14-0
+  * Update symbols file
 
  -- Dylan Aïssi <daissi@debian.org>  Wed, 04 Sep 2024 16:16:22 +0200
 

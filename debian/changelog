@@ -8,6 +8,8 @@ weston (14.0.0-1~exp1) UNRELEASED; urgency=medium
   * Update symbols file
   * Drop gentarball target in rules since we use upstream signed tarballs
   * Drop packaging tweaks for architecture ia64
+  * Update minimum version of Build-Deps
+      - wayland-protocols >= 1.33
 
  -- Dylan Aïssi <daissi@debian.org>  Wed, 04 Sep 2024 16:16:22 +0200
 

@@ -6,6 +6,7 @@ weston (14.0.0-1~exp1) UNRELEASED; urgency=medium
   * Add new Build-Deps: libdisplay-info-dev
   * Bump SONAME to libweston-14-0
   * Update symbols file
+  * Drop gentarball target in rules since we use upstream signed tarballs
 
  -- Dylan Aïssi <daissi@debian.org>  Wed, 04 Sep 2024 16:16:22 +0200
 

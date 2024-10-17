@@ -74,6 +74,23 @@ Description: reference implementation of a wayland compositor
  and fast compositor and is suitable for many embedded and mobile use
  cases.
 
+Package: weston-dev
+Architecture: linux-any
+Depends: weston,
+         libweston-14-dev,
+         ${misc:Depends},
+         ${shlibs:Depends}
+Breaks: weston (<< 14.0.0-3)
+Replaces: weston (<< 14.0.0-3)
+Description: reference implementation of a wayland compositor (headers)
+ Part of the Wayland project is also the Weston reference implementation
+ of a Wayland compositor. Weston can run as an X client or under Linux
+ KMS and ships with a few demo clients. The Weston compositor is a minimal
+ and fast compositor and is suitable for many embedded and mobile use
+ cases.
+ .
+ This package includes the weston headers for plugin development.
+
 Package: libweston-14-0
 Section: libs
 Architecture: linux-any

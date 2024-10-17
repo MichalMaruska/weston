@@ -4,8 +4,10 @@ weston (14.0.0-3) UNRELEASED; urgency=medium
       they are now successful.
   * Bump minimum version of libdisplay-info-dev to 0.2.0,
       it's required to get a better color management like HDR support.
+  * Move weston headers for plugin development into their
+      own package weston-dev. (Closes: #952530)
 
- -- Dylan Aïssi <daissi@debian.org>  Fri, 20 Sep 2024 09:37:15 +0200
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 17 Oct 2024 22:15:06 +0200
 
 weston (14.0.0-2) unstable; urgency=medium
 

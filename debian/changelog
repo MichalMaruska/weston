@@ -6,6 +6,7 @@ weston (14.0.0-3) UNRELEASED; urgency=medium
       it's required to get a better color management like HDR support.
   * Move weston headers for plugin development into their
       own package weston-dev. (Closes: #952530)
+  * cme fix dpkg-control
 
  -- Dylan Aïssi <daissi@debian.org>  Thu, 17 Oct 2024 22:15:06 +0200
 

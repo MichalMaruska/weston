@@ -2,6 +2,8 @@ weston (14.0.1-1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Update Homepage
+  * Drop libweston-noop-renderer-Check-shm_buffer-for-NULL.patch,
+      included in upstream release.
 
  -- Dylan Aïssi <daissi@debian.org>  Tue, 22 Oct 2024 17:30:05 +0200
 

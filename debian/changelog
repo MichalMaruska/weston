@@ -1,3 +1,10 @@
+weston (15.0.1-2) experimental; urgency=medium
+
+  * Backport upstream change supporting Neat VNC 1.0.0 and aml 1.0.0
+  * Set the minimum version of libneatvnc-dev to 1.0.0 (Closes: #1139327)
+
+ -- Dylan Aïssi <daissi@debian.org>  Mon, 15 Jun 2026 18:15:08 +0200
+
 weston (15.0.1-1) unstable; urgency=medium
 
   * New upstream release

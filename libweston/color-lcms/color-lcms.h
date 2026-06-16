@@ -30,6 +30,7 @@
 #include <lcms2.h>
 #include <libweston/libweston.h>
 #include <libweston/weston-log.h>
+#include <libweston/linalg-3.h>
 
 #include "color.h"
 #include "shared/helpers.h"
@@ -200,6 +201,26 @@ struct color_transform_steps_mask {
 	uint8_t steps;
 };
 
+enum cmlcms_color_transformer_elem {
+	CMLCMS_TRANSFORMER_CURVE1    = 1 << 0,
+	CMLCMS_TRANSFORMER_LIN1      = 1 << 1,
+	CMLCMS_TRANSFORMER_ICC_CHAIN = 1 << 2,
+	CMLCMS_TRANSFORMER_LIN2      = 1 << 3,
+	CMLCMS_TRANSFORMER_CURVE2    = 1 << 4,
+};
+
+/** A complete color transformation to be computed on the CPU */
+struct cmlcms_color_transformer {
+	/** Or'd together from enum cmlcms_color_transformer_elem */
+	uint8_t element_mask;
+
+	struct weston_color_curve curve1;
+	struct weston_color_mapping_matrix lin1;
+	cmsHTRANSFORM icc_chain;
+	struct weston_color_mapping_matrix lin2;
+	struct weston_color_curve curve2;
+};
+
 struct cmlcms_color_transform_recipe {
 	enum cmlcms_category category;
 	struct cmlcms_color_profile *input_profile;
@@ -228,13 +249,11 @@ struct cmlcms_color_transform {
 	cmsToneCurve *post_curve[3];
 
 	/**
-	 * 3D LUT color mapping part of the transformation, if needed by the
-	 * weston_color_transform. This is used as a fallback when an
-	 * arbitrary LittleCMS pipeline cannot be translated into a more
-	 * specific form or when the backend/renderer is not able to use
-	 * such optimized form.
+	 * For evaluating points through the complete color transformation,
+	 * even when base.steps_valid is false. This is used for the 3D LUT
+	 * path.
 	 */
-	cmsHTRANSFORM cmap_3dlut;
+	struct cmlcms_color_transformer transformer;
 
 	/**
 	 * Certain categories of transformations need their own LittleCMS
@@ -273,7 +292,7 @@ ref_cprof(struct cmlcms_color_profile *cprof);
 void
 unref_cprof(struct cmlcms_color_profile *cprof);
 
-bool
+struct cmlcms_color_profile *
 cmlcms_create_stock_profile(struct weston_color_manager_lcms *cm);
 
 void
@@ -297,5 +316,19 @@ lcms_optimize_pipeline(cmsPipeline **lut, cmsContext context_id);
 cmsToneCurve *
 lcmsJoinToneCurve(cmsContext context_id, const cmsToneCurve *X,
 		  const cmsToneCurve *Y, unsigned int resulting_points);
+
+void
+cmlcms_color_transformer_fini(struct cmlcms_color_transformer *t);
+
+void
+cmlcms_color_transformer_eval(struct weston_compositor *compositor,
+			      const struct cmlcms_color_transformer *t,
+			      struct weston_vec3f *dst,
+			      const struct weston_vec3f *src,
+			      size_t len);
+
+char *
+cmlcms_color_transformer_string(int indent,
+				const struct cmlcms_color_transformer *t);
 
 #endif /* WESTON_COLOR_LCMS_H */

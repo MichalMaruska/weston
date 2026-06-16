@@ -619,6 +619,13 @@ weston_desktop_xdg_positioner_protocol_set_anchor(struct wl_client *wl_client,
 	struct weston_desktop_xdg_positioner *positioner =
 		wl_resource_get_user_data(resource);
 
+	if (anchor > XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT) {
+		wl_resource_post_error(resource,
+				       XDG_POSITIONER_ERROR_INVALID_INPUT,
+				       "anchor must be in the anchor enum");
+		return;
+	}
+
 	positioner->anchor = anchor;
 }
 
@@ -629,6 +636,13 @@ weston_desktop_xdg_positioner_protocol_set_gravity(struct wl_client *wl_client,
 {
 	struct weston_desktop_xdg_positioner *positioner =
 		wl_resource_get_user_data(resource);
+
+	if (gravity > XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT) {
+		wl_resource_post_error(resource,
+				       XDG_POSITIONER_ERROR_INVALID_INPUT,
+				       "gravity must be in the gravity enum");
+		return;
+	}
 
 	positioner->gravity = gravity;
 }
@@ -1082,6 +1096,10 @@ weston_desktop_xdg_toplevel_committed(struct weston_desktop_xdg_toplevel *toplev
 {
 	struct weston_surface *wsurface =
 		weston_desktop_surface_get_surface(toplevel->base.desktop_surface);
+	struct weston_desktop_client *client =
+		weston_desktop_surface_get_client(toplevel->base.desktop_surface);
+	struct wl_resource *client_resource =
+		weston_desktop_client_get_resource(client);
 
 	if (!weston_surface_has_content(wsurface) && !toplevel->added) {
 		weston_desktop_xdg_toplevel_ensure_added(toplevel);
@@ -1101,36 +1119,28 @@ weston_desktop_xdg_toplevel_committed(struct weston_desktop_xdg_toplevel *toplev
 	if (toplevel->next.state.maximized &&
 	    (toplevel->next.size.width != geometry.width ||
 	     toplevel->next.size.height != geometry.height)) {
-		struct weston_desktop_client *client =
-			weston_desktop_surface_get_client(toplevel->base.desktop_surface);
-		struct wl_resource *client_resource =
-			weston_desktop_client_get_resource(client);
-
-		wl_resource_post_error(client_resource,
-				       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
-				       "xdg_surface geometry (%" PRIi32 " x %" PRIi32 ") "
-				       "does not match the configured maximized state (%" PRIi32 " x %" PRIi32 ")",
-				       geometry.width, geometry.height,
-				       toplevel->next.size.width,
-				       toplevel->next.size.height);
+		if (client_resource)
+			wl_resource_post_error(client_resource,
+					       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
+					       "xdg_surface geometry (%" PRIi32 " x %" PRIi32 ") "
+					       "does not match the configured maximized state (%" PRIi32 " x %" PRIi32 ")",
+					       geometry.width, geometry.height,
+					       toplevel->next.size.width,
+					       toplevel->next.size.height);
 		return;
 	}
 
 	if (toplevel->next.state.fullscreen &&
 	    (toplevel->next.size.width < geometry.width ||
 	     toplevel->next.size.height < geometry.height)) {
-		struct weston_desktop_client *client =
-			weston_desktop_surface_get_client(toplevel->base.desktop_surface);
-		struct wl_resource *client_resource =
-			weston_desktop_client_get_resource(client);
-
-		wl_resource_post_error(client_resource,
-				       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
-				       "xdg_surface geometry (%" PRIi32 " x %" PRIi32 ") "
-				       "is larger than the configured fullscreen state (%" PRIi32 " x %" PRIi32 ")",
-				       geometry.width, geometry.height,
-				       toplevel->next.size.width,
-				       toplevel->next.size.height);
+		if (client_resource)
+			wl_resource_post_error(client_resource,
+					       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
+					       "xdg_surface geometry (%" PRIi32 " x %" PRIi32 ") "
+					       "is larger than the configured fullscreen state (%" PRIi32 " x %" PRIi32 ")",
+					       geometry.width, geometry.height,
+					       toplevel->next.size.width,
+					       toplevel->next.size.height);
 		return;
 	}
 
@@ -1299,9 +1309,10 @@ weston_desktop_xdg_popup_protocol_grab(struct wl_client *wl_client,
 		struct wl_resource *client_resource =
 			weston_desktop_client_get_resource(client);
 
-		wl_resource_post_error(client_resource,
-				       XDG_WM_BASE_ERROR_NOT_THE_TOPMOST_POPUP,
-				       "xdg_popup was not created on the topmost popup");
+		if (client_resource)
+			wl_resource_post_error(client_resource,
+					       XDG_WM_BASE_ERROR_NOT_THE_TOPMOST_POPUP,
+					       "xdg_popup was not created on the topmost popup");
 		return;
 	}
 
@@ -1437,9 +1448,10 @@ weston_desktop_xdg_popup_destroy(struct weston_desktop_xdg_popup *popup)
 		struct wl_resource *client_resource =
 			weston_desktop_client_get_resource(client);
 
-		wl_resource_post_error(client_resource,
-				       XDG_WM_BASE_ERROR_NOT_THE_TOPMOST_POPUP,
-				       "xdg_popup was destroyed while it was not the topmost popup.");
+		if (client_resource)
+			wl_resource_post_error(client_resource,
+					       XDG_WM_BASE_ERROR_NOT_THE_TOPMOST_POPUP,
+					       "xdg_popup was destroyed while it was not the topmost popup.");
 	}
 
 	weston_desktop_surface_popup_ungrab(popup->base.desktop_surface,
@@ -1830,9 +1842,11 @@ weston_desktop_xdg_surface_protocol_ack_configure(struct wl_client *wl_client,
 			weston_desktop_surface_get_client(dsurface);
 		struct wl_resource *client_resource =
 			weston_desktop_client_get_resource(client);
-		wl_resource_post_error(client_resource,
-				       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
-				       "Wrong configure serial: %u", serial);
+
+		if (client_resource)
+			wl_resource_post_error(client_resource,
+					       XDG_WM_BASE_ERROR_INVALID_SURFACE_STATE,
+					       "Wrong configure serial: %u", serial);
 		return;
 	}
 
@@ -1859,9 +1873,13 @@ weston_desktop_xdg_surface_ping(struct weston_desktop_surface *dsurface,
 {
 	struct weston_desktop_client *client =
 		weston_desktop_surface_get_client(dsurface);
+	struct wl_resource *client_resource =
+		weston_desktop_client_get_resource(client);
 
-	xdg_wm_base_send_ping(weston_desktop_client_get_resource(client),
-			      serial);
+	if (!client_resource)
+		return;
+
+	xdg_wm_base_send_ping(client_resource, serial);
 }
 
 static void
@@ -2087,8 +2105,11 @@ weston_desktop_xdg_shell_protocol_get_xdg_surface(struct wl_client *wl_client,
 						    &xdg_surface_interface,
 						    &weston_desktop_xdg_surface_implementation,
 						    id, weston_desktop_xdg_surface_resource_destroy);
-	if (surface->resource == NULL)
+	if (surface->resource == NULL) {
+		weston_desktop_surface_destroy(surface->desktop_surface);
+		free(surface);
 		return;
+	}
 }
 
 static void
@@ -2102,8 +2123,27 @@ weston_desktop_xdg_shell_protocol_pong(struct wl_client *wl_client,
 	weston_desktop_client_pong(client, serial);
 }
 
+static void
+weston_desktop_xdg_shell_protocol_destroy(struct wl_client *wl_client,
+					  struct wl_resource *resource)
+{
+	struct weston_desktop_client *client =
+		wl_resource_get_user_data(resource);
+	struct wl_list *surface_list =
+		weston_desktop_client_get_surface_list(client);
+
+	if (!wl_list_empty(surface_list)) {
+		wl_resource_post_error(resource,
+				       XDG_WM_BASE_ERROR_DEFUNCT_SURFACES,
+				       "xdg_wm_base being destroyed before child surfaces");
+		return;
+	}
+
+	weston_desktop_destroy_request(wl_client, resource);
+}
+
 static const struct xdg_wm_base_interface weston_desktop_xdg_shell_implementation = {
-	.destroy = weston_desktop_destroy_request,
+	.destroy = weston_desktop_xdg_shell_protocol_destroy,
 	.create_positioner = weston_desktop_xdg_shell_protocol_create_positioner,
 	.get_xdg_surface = weston_desktop_xdg_shell_protocol_get_xdg_surface,
 	.pong = weston_desktop_xdg_shell_protocol_pong,

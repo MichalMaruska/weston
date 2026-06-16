@@ -1414,6 +1414,7 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 	uint32_t button;
 	struct x11_output *output;
 	struct weston_pointer_axis_event weston_event;
+	struct weston_pointer_button_event b_event;
 	bool is_button_pressed = event->response_type == XCB_BUTTON_PRESS;
 	struct timespec time = { 0 };
 
@@ -1455,49 +1456,45 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 		/* Axis are measured in pixels, but the xcb events are discrete
 		 * steps. Therefore move the axis by some pixels every step. */
 		if (is_button_pressed) {
-			weston_event.value = -DEFAULT_AXIS_STEP_DISTANCE;
-			weston_event.discrete = -1;
-			weston_event.has_discrete = true;
-			weston_event.axis =
-				WL_POINTER_AXIS_VERTICAL_SCROLL;
 			weston_compositor_get_time(&time);
-			notify_axis(&b->core_seat, &time, &weston_event);
+
+			weston_pointer_axis_event_init(&weston_event, &time, &b->core_seat,
+						       WL_POINTER_AXIS_VERTICAL_SCROLL,
+						       -DEFAULT_AXIS_STEP_DISTANCE, true, -1);
+			notify_axis(&weston_event);
 			notify_pointer_frame(&b->core_seat);
 		}
 		return;
 	case 5:
 		if (is_button_pressed) {
-			weston_event.value = DEFAULT_AXIS_STEP_DISTANCE;
-			weston_event.discrete = 1;
-			weston_event.has_discrete = true;
-			weston_event.axis =
-				WL_POINTER_AXIS_VERTICAL_SCROLL;
 			weston_compositor_get_time(&time);
-			notify_axis(&b->core_seat, &time, &weston_event);
+
+			weston_pointer_axis_event_init(&weston_event, &time, &b->core_seat,
+						       WL_POINTER_AXIS_VERTICAL_SCROLL,
+						       DEFAULT_AXIS_STEP_DISTANCE, true, 1);
+			notify_axis(&weston_event);
 			notify_pointer_frame(&b->core_seat);
 		}
 		return;
 	case 6:
 		if (is_button_pressed) {
-			weston_event.value = -DEFAULT_AXIS_STEP_DISTANCE;
-			weston_event.discrete = -1;
-			weston_event.has_discrete = true;
-			weston_event.axis =
-				WL_POINTER_AXIS_HORIZONTAL_SCROLL;
 			weston_compositor_get_time(&time);
-			notify_axis(&b->core_seat, &time, &weston_event);
+
+			weston_pointer_axis_event_init(&weston_event, &time, &b->core_seat,
+						       WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+						       -DEFAULT_AXIS_STEP_DISTANCE, true, -1);
+			notify_axis(&weston_event);
 			notify_pointer_frame(&b->core_seat);
 		}
 		return;
 	case 7:
 		if (is_button_pressed) {
-			weston_event.value = DEFAULT_AXIS_STEP_DISTANCE;
-			weston_event.discrete = 1;
-			weston_event.has_discrete = true;
-			weston_event.axis =
-				WL_POINTER_AXIS_HORIZONTAL_SCROLL;
 			weston_compositor_get_time(&time);
-			notify_axis(&b->core_seat, &time, &weston_event);
+
+			weston_pointer_axis_event_init(&weston_event, &time, &b->core_seat,
+						       WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+						       DEFAULT_AXIS_STEP_DISTANCE, true, 1);
+			notify_axis(&weston_event);
 			notify_pointer_frame(&b->core_seat);
 		}
 		return;
@@ -1507,10 +1504,12 @@ x11_backend_deliver_button_event(struct x11_backend *b,
 	}
 
 	weston_compositor_get_time(&time);
+	weston_pointer_button_event_init(&b_event, &time, &b->core_seat,
+					 button, is_button_pressed ?
+					 WL_POINTER_BUTTON_STATE_PRESSED :
+					 WL_POINTER_BUTTON_STATE_RELEASED);
 
-	notify_button(&b->core_seat, &time, button,
-		      is_button_pressed ? WL_POINTER_BUTTON_STATE_PRESSED :
-					  WL_POINTER_BUTTON_STATE_RELEASED);
+	notify_button(&b_event);
 	notify_pointer_frame(&b->core_seat);
 }
 
@@ -1520,7 +1519,8 @@ x11_backend_deliver_motion_event(struct x11_backend *b,
 {
 	struct x11_output *output;
 	struct weston_coord_global pos;
-	struct weston_pointer_motion_event motion_event = { 0 };
+	struct weston_pointer_motion_event motion_event;
+	struct weston_coord rel;
 	xcb_motion_notify_event_t *motion_notify =
 			(xcb_motion_notify_event_t *) event;
 	struct timespec time;
@@ -1535,12 +1535,13 @@ x11_backend_deliver_motion_event(struct x11_backend *b,
 						    motion_notify->event_y,
 						    &output->base);
 
-	motion_event = (struct weston_pointer_motion_event) {
-		.mask = WESTON_POINTER_MOTION_REL,
-		.rel = weston_coord_global_sub(pos, b->prev_pos).c,
-	};
+	rel = weston_coord_global_sub(pos, b->prev_pos).c;
 	weston_compositor_get_time(&time);
-	notify_motion(&b->core_seat, &time, &motion_event);
+
+	weston_pointer_motion_event_init(&motion_event, &time, &b->core_seat,
+					 WESTON_POINTER_MOTION_REL,
+					 NULL, &rel, NULL);
+	notify_motion(&motion_event);
 	notify_pointer_frame(&b->core_seat);
 
 	b->prev_pos = pos;
@@ -1630,11 +1631,15 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 				 * event below. */
 				update_xkb_state_from_core(b, key_release->state);
 				weston_compositor_get_time(&time);
-				notify_key(&b->core_seat,
-					   &time,
-					   key_release->detail - 8,
-					   WL_KEYBOARD_KEY_STATE_RELEASED,
-					   STATE_UPDATE_AUTOMATIC);
+
+				struct weston_key_event key_event;
+
+				weston_key_event_init(&key_event, &time, &b->core_seat,
+						      key_release->detail - 8,
+						      WL_KEYBOARD_KEY_STATE_RELEASED,
+						      STATE_UPDATE_AUTOMATIC);
+
+				notify_key(&key_event);
 				free(b->prev_event);
 				b->prev_event = NULL;
 				break;
@@ -1675,12 +1680,15 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			if (!b->has_xkb)
 				update_xkb_state_from_core(b, key_press->state);
 			weston_compositor_get_time(&time);
-			notify_key(&b->core_seat,
-				   &time,
-				   key_press->detail - 8,
-				   WL_KEYBOARD_KEY_STATE_PRESSED,
-				   b->has_xkb ? STATE_UPDATE_NONE :
-						STATE_UPDATE_AUTOMATIC);
+
+			struct weston_key_event key_event;
+
+			weston_key_event_init(&key_event, &time, &b->core_seat,
+					      key_press->detail - 8,
+					      WL_KEYBOARD_KEY_STATE_PRESSED,
+					      b->has_xkb ? STATE_UPDATE_NONE : STATE_UPDATE_AUTOMATIC);
+			notify_key(&key_event);
+
 			break;
 		case XCB_KEY_RELEASE:
 			/* If we don't have XKB, we need to use the lame
@@ -1691,11 +1699,13 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			}
 			key_release = (xcb_key_press_event_t *) event;
 			weston_compositor_get_time(&time);
-			notify_key(&b->core_seat,
-				   &time,
-				   key_release->detail - 8,
-				   WL_KEYBOARD_KEY_STATE_RELEASED,
-				   STATE_UPDATE_NONE);
+
+			struct weston_key_event w_key_event;
+
+			weston_key_event_init(&w_key_event, &time, &b->core_seat,
+					      key_release->detail - 8,
+					      WL_KEYBOARD_KEY_STATE_RELEASED, STATE_UPDATE_NONE);
+			notify_key(&w_key_event);
 			break;
 		case XCB_BUTTON_PRESS:
 		case XCB_BUTTON_RELEASE:
@@ -1824,11 +1834,14 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 		key_release = (xcb_key_press_event_t *) b->prev_event;
 		update_xkb_state_from_core(b, key_release->state);
 		weston_compositor_get_time(&time);
-		notify_key(&b->core_seat,
-			   &time,
-			   key_release->detail - 8,
-			   WL_KEYBOARD_KEY_STATE_RELEASED,
-			   STATE_UPDATE_AUTOMATIC);
+
+		struct weston_key_event lshift_key_event;
+
+		weston_key_event_init(&lshift_key_event, &time, &b->core_seat,
+				      key_release->detail - 8,
+				      WL_KEYBOARD_KEY_STATE_RELEASED, STATE_UPDATE_AUTOMATIC);
+		notify_key(&lshift_key_event);
+
 		free(b->prev_event);
 		b->prev_event = NULL;
 		break;

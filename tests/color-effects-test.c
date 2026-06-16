@@ -52,6 +52,7 @@ static const struct solid_buffer_color {
 enum effect_type {
 	EFFECT_TYPE_NONE = 0,
 	EFFECT_TYPE_INVERSION,
+	EFFECT_TYPE_GRAYSCALE,
 	EFFECT_TYPE_DEUTERANOPIA,
 	EFFECT_TYPE_PROTANOPIA,
 	EFFECT_TYPE_TRITANOPIA,
@@ -79,6 +80,14 @@ static const struct setup_args my_setup_args[] = {
 		.meta.name = "inversion-cat",
 		.ref_image_prefix = "color-effects",
 		.type = EFFECT_TYPE_INVERSION,
+		.solid_color = false,
+		.object_width = CAT_WIDTH,
+		.object_height = CAT_HEIGHT,
+	},
+	{
+		.meta.name = "grayscale-cat",
+		.ref_image_prefix = "color-effects",
+		.type = EFFECT_TYPE_GRAYSCALE,
 		.solid_color = false,
 		.object_width = CAT_WIDTH,
 		.object_height = CAT_HEIGHT,
@@ -124,6 +133,14 @@ static const struct setup_args my_setup_args[] = {
 		.object_height = SOLID_BUFFER_HEIGHT,
 	},
 	{
+		.meta.name = "grayscale-solid-color",
+		.ref_image_prefix = "color-effects",
+		.type = EFFECT_TYPE_GRAYSCALE,
+		.solid_color = true,
+		.object_width = SOLID_BUFFER_WIDTH,
+		.object_height = SOLID_BUFFER_HEIGHT,
+	},
+	{
 		.meta.name = "deuteranopia-solid-color",
 		.ref_image_prefix = "color-effects",
 		.type = EFFECT_TYPE_DEUTERANOPIA,
@@ -161,6 +178,8 @@ get_effect_type_str(enum effect_type type)
 		return "tritanopia";
 	case EFFECT_TYPE_INVERSION:
 		return "inversion";
+	case EFFECT_TYPE_GRAYSCALE:
+		return "grayscale";
 	case EFFECT_TYPE_NONE:
 		return NULL;
 	};
@@ -189,7 +208,8 @@ fixture_setup(struct weston_test_harness *harness, const struct setup_args *arg)
 }
 DECLARE_FIXTURE_SETUP_WITH_ARG(fixture_setup, my_setup_args, meta);
 
-TEST(color_effects)
+static enum test_result_code
+color_effects(struct wet_testsuite_data *suite_data)
 {
 	int seq_no = get_test_fixture_index();
 	const struct setup_args *arg = &my_setup_args[seq_no];
@@ -253,3 +273,7 @@ TEST(color_effects)
 
 	return res ? RESULT_OK : RESULT_FAIL;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(color_effects),
+);

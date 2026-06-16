@@ -58,10 +58,11 @@ DECLARE_FIXTURE_SETUP(fixture_setup);
 
 /* simply test if weston sends the right capabilities when
  * some devices are removed */
-TEST(seat_capabilities_test)
+static enum test_result_code
+seat_capabilities_test(struct wet_testsuite_data *suite_data)
 {
 	struct client *cl = create_client_and_test_surface(100, 100, 100, 100);
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	test_assert_ptr_not_null(cl->input->pointer);
 	weston_test_device_release(cl->test->weston_test, "pointer");
@@ -105,7 +106,7 @@ TEST(seat_capabilities_test)
 
 	/* we still should have all the capabilities, since the devices
 	 * were doubled */
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	test_assert_ptr_not_null(cl->input->pointer);
 	test_assert_ptr_not_null(cl->input->keyboard);
@@ -117,7 +118,8 @@ TEST(seat_capabilities_test)
 }
 
 #define COUNT 15
-TEST(multiple_device_add_and_remove)
+static enum test_result_code
+multiple_device_add_and_remove(struct wet_testsuite_data *suite_data)
 {
 	int i;
 	struct client *cl = create_client_and_test_surface(100, 100, 100, 100);
@@ -135,7 +137,7 @@ TEST(multiple_device_add_and_remove)
 	test_assert_ptr_not_null(cl->input->keyboard);
 	test_assert_ptr_not_null(cl->input->touch);
 
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	/* release all new devices */
 	for (i = 0; i < COUNT; ++i) {
@@ -147,7 +149,7 @@ TEST(multiple_device_add_and_remove)
 	client_roundtrip(cl);
 
 	/* there is still one from each device left */
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	test_assert_ptr_not_null(cl->input->pointer);
 	test_assert_ptr_not_null(cl->input->keyboard);
@@ -185,7 +187,7 @@ device_release_before_destroy(void)
 	weston_test_device_release(cl->test->weston_test, "touch");
 	client_roundtrip(cl);
 
-	test_assert_enum(cl->input->caps, 0);
+	test_assert_enum_eq(cl->input->caps, 0);
 
 	/* restore previous state */
 	weston_test_device_add(cl->test->weston_test, "pointer");
@@ -193,12 +195,13 @@ device_release_before_destroy(void)
 	weston_test_device_add(cl->test->weston_test, "touch");
 	client_roundtrip(cl);
 
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	client_destroy(cl);
 }
 
-TEST(device_release_before_destroy_multiple)
+static enum test_result_code
+device_release_before_destroy_multiple(struct wet_testsuite_data *suite_data)
 {
 	int i;
 
@@ -236,7 +239,7 @@ device_release_after_destroy(void)
 
 	client_roundtrip(cl);
 
-	test_assert_enum(cl->input->caps, 0);
+	test_assert_enum_eq(cl->input->caps, 0);
 
 	/* restore previous state */
 	weston_test_device_add(cl->test->weston_test, "pointer");
@@ -244,12 +247,13 @@ device_release_after_destroy(void)
 	weston_test_device_add(cl->test->weston_test, "touch");
 	client_roundtrip(cl);
 
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	client_destroy(cl);
 }
 
-TEST(device_release_after_destroy_multiple)
+static enum test_result_code
+device_release_after_destroy_multiple(struct wet_testsuite_data *suite_data)
 {
 	int i;
 
@@ -319,12 +323,13 @@ get_device_after_destroy(void)
 	weston_test_device_add(cl->test->weston_test, "touch");
 	client_roundtrip(cl);
 
-	test_assert_enum(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
+	test_assert_enum_eq(cl->input->caps, WL_SEAT_CAPABILITY_ALL);
 
 	client_destroy(cl);
 }
 
-TEST(get_device_after_destroy_multiple)
+static enum test_result_code
+get_device_after_destroy_multiple(struct wet_testsuite_data *suite_data)
 {
 	int i;
 
@@ -337,7 +342,8 @@ TEST(get_device_after_destroy_multiple)
 	return RESULT_OK;
 }
 
-TEST(seats_have_names)
+static enum test_result_code
+seats_have_names(struct wet_testsuite_data *suite_data)
 {
 	struct client *cl = create_client_and_test_surface(100, 100, 100, 100);
 	struct input *input;
@@ -351,7 +357,8 @@ TEST(seats_have_names)
 	return RESULT_OK;
 }
 
-TEST(seat_destroy_and_recreate)
+static enum test_result_code
+seat_destroy_and_recreate(struct wet_testsuite_data *suite_data)
 {
 	struct client *cl = create_client_and_test_surface(100, 100, 100, 100);
 
@@ -376,3 +383,13 @@ TEST(seat_destroy_and_recreate)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(seat_capabilities_test),
+	TESTFN(multiple_device_add_and_remove),
+	TESTFN(device_release_before_destroy_multiple),
+	TESTFN(device_release_after_destroy_multiple),
+	TESTFN(get_device_after_destroy_multiple),
+	TESTFN(seats_have_names),
+	TESTFN(seat_destroy_and_recreate),
+);

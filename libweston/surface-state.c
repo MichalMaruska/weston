@@ -76,7 +76,7 @@ struct weston_transaction_queue {
 
 struct weston_transaction {
 	struct weston_transaction_queue *queue;
-	uint64_t flow_id;
+	struct weston_trace_flow flow;
 	struct wl_list link; /* weston_transaction_queue::transaction_list */
 	struct wl_list content_update_list; /* weston_content_update::link */
 };
@@ -131,7 +131,7 @@ void
 weston_surface_state_init(struct weston_surface *surface,
 			  struct weston_surface_state *state)
 {
-	state->flow_id = 0;
+	state->flow.id = 0;
 	state->status = WESTON_SURFACE_CLEAN;
 	state->buffer_ref.buffer = NULL;
 	state->buf_offset = weston_coord_surface(0, 0, surface);
@@ -154,6 +154,8 @@ weston_surface_state_init(struct weston_surface *surface,
 	state->desired_protection = WESTON_HDCP_DISABLE;
 	state->protection_mode = WESTON_SURFACE_PROTECTION_MODE_RELAXED;
 
+	state->alpha_modifier = 1.0f;
+
 	state->color_profile = NULL;
 	state->render_intent = NULL;
 
@@ -173,7 +175,7 @@ weston_surface_state_fini(struct weston_surface_state *state)
 {
 	struct wl_resource *cb, *next;
 
-	state->flow_id = 0;
+	state->flow.id = 0;
 	wl_resource_for_each_safe(cb, next, &state->frame_callback_list)
 		wl_resource_destroy(cb);
 
@@ -200,9 +202,13 @@ weston_surface_attach(struct weston_surface *surface,
 		      struct weston_surface_state *state,
 		      enum weston_surface_status status)
 {
-	WESTON_TRACE_FUNC_FLOW(&surface->flow_id);
 	struct weston_buffer *buffer = state->buffer_ref.buffer;
 	struct weston_buffer *old_buffer = surface->buffer_ref.buffer;
+	enum weston_paint_node_status pnode_changes = WESTON_PAINT_NODE_CLEAN;
+
+	WESTON_TRACE_ANNOTATE_FUNC(("surface flow", &surface->flow),
+				   ("surface", surface->internal_name),
+				   ("new buffer", buffer));
 
 	if (!buffer) {
 		if (weston_surface_is_mapped(surface)) {
@@ -222,6 +228,8 @@ weston_surface_attach(struct weston_surface *surface,
 
 		return status;
 	}
+
+	pnode_changes |= WESTON_PAINT_NODE_BUFFER_DIRTY;
 
 	/* Recalculate the surface size if the buffer dimensions or the
 	 * surface transforms (viewport, rotation/mirror, scale) have
@@ -246,19 +254,26 @@ weston_surface_attach(struct weston_surface *surface,
 		}
 	}
 
+	/* The buffer was destroyed (!old_buffer->resource), so set the
+	 * BUFFER_PARAMS_DIRTY bit.
+	 *
+	 * This is because backends can opportunistically reuse plane state
+	 * if only the buffer has changed, but a buffer changing from invalid
+	 * to valid needs action.
+	 */
+	if (old_buffer && !old_buffer->resource)
+		pnode_changes |= WESTON_PAINT_NODE_BUFFER_PARAMS_DIRTY;
+
 	if (!old_buffer ||
 	    buffer->pixel_format != old_buffer->pixel_format ||
 	    buffer->format_modifier != old_buffer->format_modifier) {
-		surface->is_opaque = pixel_format_is_opaque(buffer->pixel_format);
 		status |= WESTON_SURFACE_DIRTY_BUFFER_PARAMS;
-		weston_surface_dirty_paint_nodes(surface,
-						 WESTON_PAINT_NODE_BUFFER_PARAMS_DIRTY);
+		pnode_changes |= WESTON_PAINT_NODE_BUFFER_PARAMS_DIRTY;
 	}
 
 	status |= WESTON_SURFACE_DIRTY_BUFFER;
-	weston_surface_dirty_paint_nodes(surface,
-					 WESTON_PAINT_NODE_BUFFER_DIRTY);
-	old_buffer = NULL;
+	weston_surface_dirty_paint_nodes(surface, pnode_changes);
+
 	weston_buffer_reference(&surface->buffer_ref, buffer,
 				BUFFER_MAY_BE_ACCESSED);
 
@@ -279,7 +294,8 @@ weston_surface_apply_subsurface_order(struct weston_surface *surface)
 		wl_list_for_each(view, &sub->surface->views, surface_link)
 			weston_view_geometry_dirty(view);
 	}
-	weston_assert_true(comp, comp->view_list_needs_rebuild);
+	if (!wl_list_empty(&surface->views))
+		weston_assert_true(comp, comp->view_list_needs_rebuild);
 }
 
 /* Translate pending damage in buffer co-ordinates to surface
@@ -360,15 +376,14 @@ static enum weston_surface_status
 weston_surface_apply_state(struct weston_surface *surface,
 			   struct weston_surface_state *state)
 {
-	WESTON_TRACE_FUNC_FLOW(&state->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("surface state flow", &state->flow));
 	struct weston_view *view;
-	pixman_region32_t opaque;
 	enum weston_surface_status status = state->status;
 
 	assert(!surface->compositor->latched);
 
-	surface->flow_id = state->flow_id;
-	state->flow_id = 0;
+	surface->flow.id = state->flow.id;
+	state->flow.id = 0;
 
 	/* wl_surface.set_buffer_transform */
 	/* wl_surface.set_buffer_scale */
@@ -445,23 +460,38 @@ weston_surface_apply_state(struct weston_surface *surface,
 	pixman_region32_clear(&state->damage_buffer);
 	pixman_region32_clear(&state->damage_surface);
 
-	/* wl_surface.set_opaque_region */
+	/* wl_surface.set_opaque_region and wp_alpha_modifier_surface_v1 */
 	if (status & (WESTON_SURFACE_DIRTY_SIZE |
 		      WESTON_SURFACE_DIRTY_BUFFER_PARAMS)) {
-		pixman_region32_init(&opaque);
-		pixman_region32_intersect_rect(&opaque, &state->opaque,
-					       0, 0,
-					       surface->width, surface->height);
+		surface->alpha_modifier = state->alpha_modifier;
+		surface->is_opaque =
+			surface->buffer_ref.buffer &&
+			pixel_format_is_opaque(surface->buffer_ref.buffer->pixel_format) &&
+			surface->alpha_modifier == 1.0f;
 
-		if (!pixman_region32_equal(&opaque, &surface->opaque)) {
-			pixman_region32_copy(&surface->opaque, &opaque);
-			wl_list_for_each(view, &surface->views, surface_link) {
-				weston_view_geometry_dirty_internal(view);
-				weston_view_update_transform(view);
-			}
+		if (surface->is_opaque) {
+			/* Opaque region hint ignored, as whole surface is opaque. */
+			pixman_region32_fini(&surface->opaque);
+			pixman_region32_init_rect(&surface->opaque,
+						  0, 0,
+						  surface->width, surface->height);
+		} else if (surface->alpha_modifier == 1.0f) {
+			/**
+			 * Surface not fully opaque, but at least alpha modifier
+			 * is. So we are safe to use the opaque region hint. If
+			 * alpha modifier isn't fully opaque, the whole surface
+			 * has transparency and we'd have to ignore the opaque
+			 * region hint.
+			 */
+			pixman_region32_intersect_rect(&surface->opaque, &state->opaque,
+						       0, 0,
+						       surface->width, surface->height);
 		}
 
-		pixman_region32_fini(&opaque);
+		wl_list_for_each(view, &surface->views, surface_link) {
+			weston_view_geometry_dirty_internal(view);
+			weston_view_update_transform(view);
+		}
 	}
 
 	/* wl_surface.set_input_region */
@@ -592,7 +622,7 @@ static void
 weston_surface_apply(struct weston_surface *surface,
 		     struct weston_surface_state *state)
 {
-	WESTON_TRACE_FUNC_FLOW(&state->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("surface state flow", &state->flow));
 	struct weston_subsurface *sub;
 	enum weston_surface_status status;
 
@@ -611,8 +641,8 @@ weston_surface_state_merge_from(struct weston_surface_state *dst,
 				struct weston_surface_state *src,
 				struct weston_surface *surface)
 {
-	WESTON_TRACE_FUNC_FLOW(&dst->flow_id);
-	src->flow_id = 0;
+	WESTON_TRACE_ANNOTATE_FUNC(("surface state flow", &dst->flow));
+	src->flow.id = 0;
 
 
 	/*
@@ -693,6 +723,8 @@ weston_surface_state_merge_from(struct weston_surface_state *dst,
 	dst->update_time = src->update_time;
 	weston_commit_timing_clear_target(&src->update_time);
 
+	dst->alpha_modifier = src->alpha_modifier;
+
 	dst->status |= src->status;
 	src->status = WESTON_SURFACE_CLEAN;
 }
@@ -771,7 +803,7 @@ weston_transaction_add_content_update(struct weston_transaction *tr,
 	cu->surface = surface;
 	weston_surface_state_init(surface, &cu->state);
 
-	cu->state.flow_id = state->flow_id;
+	cu->state.flow.id = state->flow.id;
 	weston_surface_state_merge_from(&cu->state, state, surface);
 
 	wl_list_insert(&tr->content_update_list, &cu->link);
@@ -782,15 +814,15 @@ weston_surface_create_transaction(struct weston_compositor *comp,
 				  struct weston_surface *surface,
 				  struct weston_surface_state *state)
 {
-	uint64_t transaction_flow_id = 0;
-	WESTON_TRACE_FUNC_FLOW(&transaction_flow_id);
+	struct weston_trace_flow transaction_flow = {};
+	WESTON_TRACE_ANNOTATE_FUNC(("transaction flow", &transaction_flow));
 
 	struct weston_transaction *tr;
 	struct weston_transaction_queue *parent;
 	bool need_schedule = false;
 
 	tr = xzalloc(sizeof *tr);
-	tr->flow_id = transaction_flow_id;
+	tr->flow = transaction_flow;
 	wl_list_init(&tr->content_update_list);
 
 	weston_transaction_add_content_update(tr, surface, state);
@@ -830,7 +862,7 @@ weston_surface_state_ready(struct weston_surface *surface,
 void
 weston_surface_commit(struct weston_surface *surface)
 {
-	WESTON_TRACE_FUNC_FLOW(&surface->pending.flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("surface state flow", &surface->pending.flow));
 	struct weston_compositor *comp = surface->compositor;
 	struct weston_subsurface *sub = weston_surface_to_subsurface(surface);
 	struct weston_surface_state *state = &surface->pending;
@@ -893,7 +925,7 @@ weston_subsurface_update_effectively_synchronized(struct weston_subsurface *sub)
 	bool parent_e_sync = false;
 	struct weston_subsurface *child;
 	struct weston_surface *surf = sub->surface;
-	WESTON_TRACE_FUNC_FLOW(&surf->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("surface flow", &surf->flow));
 
 	if (sub->parent) {
 		struct weston_subsurface *parent;
@@ -924,7 +956,7 @@ weston_subsurface_update_effectively_synchronized(struct weston_subsurface *sub)
 void
 weston_subsurface_set_synchronized(struct weston_subsurface *sub, bool sync)
 {
-	WESTON_TRACE_FUNC_FLOW(&sub->surface->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("subsurface flow", &sub->surface->flow));
 	bool old_e_sync = sub->effectively_synchronized;
 
 	if (sub->synchronized == sync)
@@ -942,7 +974,7 @@ weston_subsurface_set_synchronized(struct weston_subsurface *sub, bool sync)
 static void
 apply_transaction(struct weston_transaction *transaction)
 {
-	WESTON_TRACE_FUNC_FLOW(&transaction->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("transaction flow", &transaction->flow));
 	struct weston_content_update *cu, *tmp;
 
 	wl_list_remove(&transaction->link);
@@ -958,7 +990,7 @@ apply_transaction(struct weston_transaction *transaction)
 static bool
 transaction_ready(struct weston_transaction *transaction)
 {
-	WESTON_TRACE_FUNC_FLOW(&transaction->flow_id);
+	WESTON_TRACE_ANNOTATE_FUNC(("transaction flow", &transaction->flow));
 	struct weston_content_update *cu;
 
 	/* Every content update within the transaction must be ready

@@ -144,7 +144,6 @@ trigger_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 	struct weston_seat *seat = keyboard->seat;
 	struct weston_pointer *pointer = weston_seat_get_pointer(seat);
 	int width, height;
-	char desc[512];
 	void *pixels;
 	const size_t bytespp = 4; /* PIXMAN_a8b8g8r8 */
 	size_t sz;
@@ -158,12 +157,8 @@ trigger_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 
 	weston_surface_get_content_size(surface, &width, &height);
 
-	if (!surface->get_label ||
-	    surface->get_label(surface, desc, sizeof(desc)) < 0)
-		snprintf(desc, sizeof(desc), "(unknown)");
-
 	weston_log("surface screenshot of %p: '%s', %dx%d\n",
-		   surface, desc, width, height);
+		   surface, surface->label, width, height);
 
 	sz = width * bytespp * height;
 	if (sz == 0) {
@@ -203,7 +198,7 @@ trigger_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 		goto out;
 	}
 
-	ret = write_PAM_image_rgba(fp, width, height, pixels, sz, desc);
+	ret = write_PAM_image_rgba(fp, width, height, pixels, sz, surface->label);
 	if (fclose(fp) != 0 || ret < 0)
 		weston_log("writing surface %p screenshot failed.\n", surface);
 	else

@@ -9,12 +9,6 @@ option(
 	description: 'Weston backend: DRM/KMS'
 )
 option(
-	'deprecated-backend-drm-screencast-vaapi',
-	type: 'boolean',
-	value: false,
-	description: 'DEPRECATED: DRM/KMS backend support for VA-API screencasting'
-)
-option(
 	'backend-headless',
 	type: 'boolean',
 	value: true,
@@ -31,12 +25,6 @@ option(
 	type: 'boolean',
 	value: true,
 	description: 'Weston backend: RDP remote screensharing'
-)
-option(
-	'deprecated-screenshare',
-	type: 'boolean',
-	value: false,
-	description: 'DEPRECATED: Compositor: RDP screen-sharing support. Requires fullscreen-shell support'
 )
 option(
 	'backend-vnc',
@@ -99,17 +87,17 @@ option(
 )
 
 option(
-	'remoting',
+	'deprecated-remoting',
 	type: 'boolean',
-	value: true,
-	description: 'Virtual remote output with GStreamer on DRM backend'
+	value: false,
+	description: 'DEPRECATED: Virtual remote output with GStreamer on DRM backend - migrate to backend-pipewire instead'
 )
 
 option(
-	'pipewire',
+	'deprecated-pipewire',
 	type: 'boolean',
-	value: true,
-	description: 'Virtual remote output with Pipewire on DRM backend'
+	value: false,
+	description: 'DEPRECATED: Virtual remote output with Pipewire on DRM backend - migrate to backend-pipewire instead'
 )
 
 option(
@@ -117,12 +105,6 @@ option(
 	type: 'boolean',
 	value: true,
 	description: 'Weston shell UI: traditional desktop'
-)
-option(
-	'deprecated-shell-fullscreen',
-	type: 'boolean',
-	value: false,
-	description: 'DEPRECATED: Weston shell UI: fullscreen/kiosk. For a more modern alternative, use kiosk-shell instead'
 )
 option(
 	'shell-ivi',
@@ -148,6 +130,13 @@ option(
 	type: 'string',
 	value: 'weston-desktop-shell',
 	description: 'Weston desktop shell: default helper client selection'
+)
+
+option(
+	'deprecated-xdg-shell-v6-unstable',
+	type: 'boolean',
+	value: false,
+	description: 'DEPRECATED: xdg-shell v6 unstable support. Use xdg-shell stable'
 )
 
 option(
@@ -196,12 +185,6 @@ option(
 	value: true,
 	description: 'Sample clients: optimize window resize performance'
 )
-option(
-	'wcap-decode',
-	type: 'boolean',
-	value: true,
-	description: 'Tools: screen recording decoder tool'
-)
 
 option(
 	'tests',
@@ -232,4 +215,11 @@ option(
 	type : 'boolean',
 	value : false,
 	description : 'Enable performance analysis with Perfetto.'
+)
+
+option(
+	'allow-deprecated-modeset',
+	type: 'boolean',
+	value: false,
+	description: 'DEPRECATED: Allow non-atomic modeset paths which will be removed soon'
 )

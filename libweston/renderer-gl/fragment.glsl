@@ -1,6 +1,6 @@
 /*
  * Copyright 2012 Intel Corporation
- * Copyright 2015,2019,2021 Collabora, Ltd.
+ * Copyright 2015,2019,2021-2025 Collabora, Ltd.
  * Copyright 2016 NVIDIA Corporation
  * Copyright 2021 Advanced Micro Devices, Inc.
  *
@@ -44,7 +44,8 @@
 /* enum gl_shader_color_effect */
 #define SHADER_COLOR_EFFECT_NONE 0
 #define SHADER_COLOR_EFFECT_INVERSION 1
-#define SHADER_COLOR_EFFECT_CVD_CORRECTION 2
+#define SHADER_COLOR_EFFECT_GRAYSCALE 2
+#define SHADER_COLOR_EFFECT_CVD_CORRECTION 3
 
 /* enum gl_shader_color_curve */
 #define SHADER_COLOR_CURVE_IDENTITY 0
@@ -59,12 +60,20 @@
 #define SHADER_COLOR_MAPPING_3DLUT 1
 #define SHADER_COLOR_MAPPING_MATRIX 2
 
+/* enum gl_shader_fb_alpha_encoding */
+#define SHADER_FB_ALPHA_PREMULT 0
+#define SHADER_FB_ALPHA_STRAIGHT 1
+
 #if DEF_VARIANT == SHADER_VARIANT_EXTERNAL
 #extension GL_OES_EGL_image_external : require
 #endif
 
 #if DEF_COLOR_MAPPING == SHADER_COLOR_MAPPING_3DLUT
 #extension GL_OES_texture_3D : require
+#endif
+
+#if DEF_SHADER_BLENDING
+#extension GL_EXT_shader_framebuffer_fetch_non_coherent : require
 #endif
 
 #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -83,8 +92,12 @@ compile_const int c_variant = DEF_VARIANT;
 compile_const int c_color_pre_curve = DEF_COLOR_PRE_CURVE;
 compile_const int c_color_mapping = DEF_COLOR_MAPPING;
 compile_const int c_color_post_curve = DEF_COLOR_POST_CURVE;
+compile_const int c_fb_fetch_curve = DEF_FB_FETCH_CURVE;
+compile_const int c_fb_store_curve = DEF_FB_STORE_CURVE;
 compile_const int c_color_effect = DEF_COLOR_EFFECT;
+compile_const int c_fb_alpha_encoding = DEF_FB_ALPHA_ENCODING;
 
+compile_const bool c_need_swizzle_idx = DEF_NEED_SWIZZLE_IDX;
 compile_const bool c_input_is_premult = DEF_INPUT_IS_PREMULT;
 compile_const bool c_tint = DEF_TINT;
 compile_const bool c_wireframe = DEF_WIREFRAME;
@@ -124,7 +137,7 @@ varying HIGHPRECISION vec3 v_barycentric;
 uniform sampler2D tex1;
 uniform sampler2D tex2;
 uniform sampler2D tex_wireframe;
-uniform float view_alpha;
+uniform float paint_node_alpha;
 uniform vec4 unicolor;
 uniform vec4 tint;
 uniform ivec4 swizzle_idx[3];
@@ -159,6 +172,12 @@ uniform HIGHPRECISION vec3 color_mapping_offset;
 
 uniform HIGHPRECISION mat3 cvd_correction_matrix;
 
+uniform lut_2d_t fb_fetch_curve_lut;
+uniform parametric_curve_t fb_fetch_curve_par;
+
+uniform lut_2d_t fb_store_curve_lut;
+uniform parametric_curve_t fb_store_curve_par;
+
 /*
  * 2D texture sampler abstracting away the lack of swizzles on OpenGL ES 2. This
  * should only be used by code relying on swizzling. 'unit' is the texture unit
@@ -174,10 +193,12 @@ texture2D_swizzle(sampler2D sampler, int unit, vec2 coord)
 	vec4 color = texture2D(sampler, coord);
 
 	/* Swizzle components. */
-	color = vec4(color[swizzle_idx[unit].x],
-		     color[swizzle_idx[unit].y],
-		     color[swizzle_idx[unit].z],
-		     color[swizzle_idx[unit].w]);
+	if (c_need_swizzle_idx) {
+		color = vec4(color[swizzle_idx[unit].x],
+			     color[swizzle_idx[unit].y],
+			     color[swizzle_idx[unit].z],
+			     color[swizzle_idx[unit].w]);
+	}
 
 	/* Substitute with 0 or 1. */
 	return color * swizzle_mask[unit] + swizzle_sub[unit];
@@ -451,7 +472,28 @@ color_pipeline(vec4 color)
 vec4
 color_inversion(vec4 color)
 {
+	/**
+	 * Ideally this should be done in linear space, but converting to linear
+	 * and back is costly. Historically this also has been done in the
+	 * electrical domain. Let's do in electrical, results are good enough.
+	 */
 	color.rgb = 1.0 - color.rgb;
+
+	return color;
+}
+
+vec4
+color_grayscale(vec4 color)
+{
+	float gray;
+
+	/**
+	 * Ideally this should be done in linear space, but converting to linear
+	 * and back is costly. Historically this also has been done in the
+	 * electrical domain. Let's do in electrical, results are good enough.
+	 */
+	gray = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+	color.rgb = vec3(gray);
 
 	return color;
 }
@@ -483,8 +525,8 @@ wireframe()
 	return vec4(clamp(edge1 + edge2 + edge3, 0.0, 1.0));
 }
 
-void
-main()
+vec4
+fragment_input_color_premult()
 {
 	vec4 color;
 
@@ -504,6 +546,8 @@ main()
 		color = color_pipeline(color);
 	else if (c_color_effect == SHADER_COLOR_EFFECT_INVERSION)
 		color = color_inversion(color);
+	else if (c_color_effect == SHADER_COLOR_EFFECT_GRAYSCALE)
+		color = color_grayscale(color);
 	else if (c_color_effect == SHADER_COLOR_EFFECT_CVD_CORRECTION)
 		color = color_cvd_correction(color);
 
@@ -511,7 +555,7 @@ main()
 	if (!c_input_is_premult || (c_input_is_premult && c_need_straight_alpha))
 		color.rgb *= color.a;
 
-	color *= view_alpha;
+	color *= paint_node_alpha;
 
 	if (c_tint)
 		color = color * vec4(1.0 - tint.a) + tint;
@@ -521,5 +565,56 @@ main()
 		color = color * vec4(1.0 - src.a) + src;
 	}
 
-	gl_FragColor = color;
+	return color;
 }
+
+#if DEF_SHADER_BLENDING
+
+layout(noncoherent) mediump vec4 gl_LastFragData[gl_MaxDrawBuffers];
+
+void
+main()
+{
+	vec4 src;
+	vec4 dst;
+
+	/* Always alpha pre-multiplied. */
+	src = fragment_input_color_premult();
+
+	/**
+	* Framebuffer content is pre-multiplied in decoded (usually optical)
+	* space if c_fb_alpha_encoding == SHADER_FB_ALPHA_PREMULT, straight
+	* alpha otherwise.
+	 */
+	dst = gl_LastFragData[0];
+	dst.rgb = color_curve(c_fb_fetch_curve, fb_fetch_curve_lut,
+			      fb_fetch_curve_par, dst.rgb);
+
+	if (c_fb_alpha_encoding == SHADER_FB_ALPHA_PREMULT) {
+		/* glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); */
+		dst = src + (1.0 - src.a) * dst;
+	} else {
+		/* SHADER_FB_ALPHA_STRAIGHT; same formula here, but
+		 * dst is not alpha pre-mult. */
+		dst.rgb = src.rgb + (1.0 - src.a) * dst.rgb * dst.a;
+		dst.a = src.a + (1.0 - src.a) * dst.a;
+		/* Leave the fb as straight alpha */
+		if (dst.a > 0.0)
+			dst.rgb /= dst.a;
+	}
+
+	dst.rgb = color_curve(c_fb_store_curve, fb_store_curve_lut,
+			      fb_store_curve_par, dst.rgb);
+
+	gl_FragColor = dst;
+}
+
+#else
+
+void
+main()
+{
+	gl_FragColor = fragment_input_color_premult();
+}
+
+#endif /* DEF_SHADER_BLENDING */

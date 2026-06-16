@@ -1,6 +1,6 @@
 /*
  * Copyright 2012 Intel Corporation
- * Copyright 2015,2019,2021 Collabora, Ltd.
+ * Copyright 2015,2019,2021-2025 Collabora, Ltd.
  * Copyright 2016 NVIDIA Corporation
  * Copyright 2019 Harish Krupo
  * Copyright 2019 Intel Corporation
@@ -46,6 +46,7 @@
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
 #include "shared/weston-assert.h"
+#include "weston-trace.h"
 
 /* static const char vertex_shader[]; vertex.glsl */
 #include "vertex-shader.h"
@@ -88,92 +89,120 @@ struct gl_shader {
 	GLint swizzle_mask[3];
 	GLint swizzle_sub[3];
 	GLint tex_uniform_wireframe;
-	GLint view_alpha_uniform;
+	GLint paint_node_alpha_uniform;
 	GLint color_uniform;
 	GLint tint_uniform;
 	GLint cvd_correction_uniform;
 	union gl_shader_color_curve_uniforms color_pre_curve;
 	union gl_shader_color_mapping_uniforms color_mapping;
 	union gl_shader_color_curve_uniforms color_post_curve;
+	union gl_shader_color_curve_uniforms fb_fetch_curve;
+	union gl_shader_color_curve_uniforms fb_store_curve;
 	GLint yuv_offsets_uniform;
 	GLint yuv_coefficients_uniform;
 };
 
-static const char *
+struct gl_shader_enum_map {
+	const char *symbol;
+	const char *desc;
+};
+
+static const struct gl_shader_enum_map *
+gl_shader_enum_map_get_(const struct gl_shader_enum_map *map,
+		        size_t map_len,
+		        unsigned value)
+{
+	if (value >= map_len)
+		abort();
+
+	if (!map[value].symbol)
+		abort();
+
+	return &map[value];
+}
+
+#define gl_shader_enum_map_get(map, value) gl_shader_enum_map_get_((map), ARRAY_LENGTH(map), (value))
+
+#define ENUMVAL(sym, text) [sym] = { #sym, text }
+
+static const struct gl_shader_enum_map gl_shader_texcoord_input_mapping[] = {
+	ENUMVAL(SHADER_TEXCOORD_INPUT_SURFACE, "surf"),
+	ENUMVAL(SHADER_TEXCOORD_INPUT_ATTRIB, "attr"),
+};
+
+static const struct gl_shader_enum_map *
 gl_shader_texcoord_input_to_string(enum gl_shader_texcoord_input kind)
 {
-	switch (kind) {
-#define CASERET(x) case x: return #x;
-	CASERET(SHADER_TEXCOORD_INPUT_SURFACE)
-	CASERET(SHADER_TEXCOORD_INPUT_ATTRIB)
-#undef CASERET
-	}
-
-	return "!?!?"; /* never reached */
+	return gl_shader_enum_map_get(gl_shader_texcoord_input_mapping, kind);
 }
 
-static const char *
+static const struct gl_shader_enum_map gl_shader_texture_variant_mapping[] = {
+	ENUMVAL(SHADER_VARIANT_NONE, "none"),
+	ENUMVAL(SHADER_VARIANT_RGBA, "RGBA"),
+	ENUMVAL(SHADER_VARIANT_Y_U_V, "Y_U_V"),
+	ENUMVAL(SHADER_VARIANT_Y_UV, "Y_UV"),
+	ENUMVAL(SHADER_VARIANT_XYUV, "XYUV"),
+	ENUMVAL(SHADER_VARIANT_SOLID, "solid"),
+	ENUMVAL(SHADER_VARIANT_EXTERNAL, "external"),
+};
+
+static const struct gl_shader_enum_map *
 gl_shader_texture_variant_to_string(enum gl_shader_texture_variant v)
 {
-	switch (v) {
-#define CASERET(x) case x: return #x;
-	CASERET(SHADER_VARIANT_NONE)
-	CASERET(SHADER_VARIANT_RGBA)
-	CASERET(SHADER_VARIANT_Y_U_V)
-	CASERET(SHADER_VARIANT_Y_UV)
-	CASERET(SHADER_VARIANT_XYUV)
-	CASERET(SHADER_VARIANT_SOLID)
-	CASERET(SHADER_VARIANT_EXTERNAL)
-#undef CASERET
-	}
-
-	return "!?!?"; /* never reached */
+	return gl_shader_enum_map_get(gl_shader_texture_variant_mapping, v);
 }
 
-static const char *
+static const struct gl_shader_enum_map gl_shader_color_effect_mapping[] = {
+	ENUMVAL(SHADER_COLOR_EFFECT_NONE, "no"),
+	ENUMVAL(SHADER_COLOR_EFFECT_INVERSION, "inv"),
+	ENUMVAL(SHADER_COLOR_EFFECT_GRAYSCALE, "gray"),
+	ENUMVAL(SHADER_COLOR_EFFECT_CVD_CORRECTION, "CVD-corr"),
+};
+
+static const struct gl_shader_enum_map *
 gl_shader_color_effect_to_string(enum gl_shader_color_effect kind)
 {
-	switch(kind) {
-#define CASERET(x) case x: return #x;
-	CASERET(SHADER_COLOR_EFFECT_NONE)
-	CASERET(SHADER_COLOR_EFFECT_INVERSION)
-	CASERET(SHADER_COLOR_EFFECT_CVD_CORRECTION)
-#undef CASERET
-	}
-
-	return "!?!?"; /* never reached */
+	return gl_shader_enum_map_get(gl_shader_color_effect_mapping, kind);
 }
 
-static const char *
+static const struct gl_shader_enum_map gl_shader_color_curve_mapping[] = {
+	ENUMVAL(SHADER_COLOR_CURVE_IDENTITY, "I"),
+	ENUMVAL(SHADER_COLOR_CURVE_LUT_3x1D, "3x1D"),
+	ENUMVAL(SHADER_COLOR_CURVE_LINPOW, "linpow"),
+	ENUMVAL(SHADER_COLOR_CURVE_POWLIN, "powlin"),
+	ENUMVAL(SHADER_COLOR_CURVE_PQ, "PQ"),
+	ENUMVAL(SHADER_COLOR_CURVE_PQ_INVERSE, "PQ⁻¹"),
+};
+
+static const struct gl_shader_enum_map *
 gl_shader_color_curve_to_string(enum gl_shader_color_curve kind)
 {
-	switch (kind) {
-#define CASERET(x) case x: return #x;
-	CASERET(SHADER_COLOR_CURVE_IDENTITY)
-	CASERET(SHADER_COLOR_CURVE_LUT_3x1D)
-	CASERET(SHADER_COLOR_CURVE_LINPOW)
-	CASERET(SHADER_COLOR_CURVE_POWLIN)
-	CASERET(SHADER_COLOR_CURVE_PQ)
-	CASERET(SHADER_COLOR_CURVE_PQ_INVERSE)
-#undef CASERET
-	}
-
-	return "!?!?"; /* never reached */
+	return gl_shader_enum_map_get(gl_shader_color_curve_mapping, kind);
 }
 
-static const char *
+static const struct gl_shader_enum_map gl_shader_color_mapping_mapping[] = {
+	ENUMVAL(SHADER_COLOR_MAPPING_IDENTITY, "I"),
+	ENUMVAL(SHADER_COLOR_MAPPING_3DLUT, "3DLUT"),
+	ENUMVAL(SHADER_COLOR_MAPPING_MATRIX, "M"),
+};
+
+static const struct gl_shader_enum_map *
 gl_shader_color_mapping_to_string(enum gl_shader_color_mapping kind)
 {
-	switch (kind) {
-#define CASERET(x) case x: return #x;
-	CASERET(SHADER_COLOR_MAPPING_IDENTITY)
-	CASERET(SHADER_COLOR_MAPPING_3DLUT)
-	CASERET(SHADER_COLOR_MAPPING_MATRIX)
-#undef CASERET
-	}
-
-	return "!?!?"; /* never reached */
+	return gl_shader_enum_map_get(gl_shader_color_mapping_mapping, kind);
 }
+
+static const struct gl_shader_enum_map gl_shader_fb_alpha_encoding_mapping[] = {
+	ENUMVAL(SHADER_FB_ALPHA_PREMULT, "pre-mult"),
+	ENUMVAL(SHADER_FB_ALPHA_STRAIGHT, "straight"),
+};
+
+static const struct gl_shader_enum_map *
+gl_shader_fb_alpha_encoding_to_string(enum gl_shader_fb_alpha_encoding kind)
+{
+	return gl_shader_enum_map_get(gl_shader_fb_alpha_encoding_mapping, kind);
+}
+
 
 static void
 dump_program_with_line_numbers(int count, const char **sources)
@@ -240,15 +269,20 @@ create_shader_description_string(const struct gl_shader_requirements *req)
 	int size;
 	char *str;
 
-	size = asprintf(&str, "%s %s %s %s %s %s %cinput_is_premult %ctint",
-			gl_shader_texcoord_input_to_string(req->texcoord_input),
-			gl_shader_texture_variant_to_string(req->variant),
-			gl_shader_color_effect_to_string(req->color_effect),
-			gl_shader_color_curve_to_string(req->color_pre_curve),
-			gl_shader_color_mapping_to_string(req->color_mapping),
-			gl_shader_color_curve_to_string(req->color_post_curve),
+	size = asprintf(&str, "%s tc, %s tex, %s effect, CP{ %s, %s, %s }, %cswz %cpremult_in %ctint %cshader_blending (%s, %s) fb_alpha_encoding %s",
+			gl_shader_texcoord_input_to_string(req->texcoord_input)->desc,
+			gl_shader_texture_variant_to_string(req->variant)->desc,
+			gl_shader_color_effect_to_string(req->color_effect)->desc,
+			gl_shader_color_curve_to_string(req->color_pre_curve)->desc,
+			gl_shader_color_mapping_to_string(req->color_mapping)->desc,
+			gl_shader_color_curve_to_string(req->color_post_curve)->desc,
+			req->swizzle_idx ? '+' : '-',
 			req->input_is_premult ? '+' : '-',
-			req->tint ? '+' : '-');
+			req->tint ? '+' : '-',
+			req->shader_blending ? '+' : '-',
+			gl_shader_color_curve_to_string(req->fb_fetch_curve)->desc,
+			gl_shader_color_curve_to_string(req->fb_store_curve)->desc,
+			gl_shader_fb_alpha_encoding_to_string(req->fb_alpha_encoding)->desc);
 	if (size < 0)
 		return NULL;
 	return str;
@@ -263,7 +297,7 @@ create_vertex_shader_config_string(const struct gl_shader_requirements *req)
 	size = asprintf(&str,
 			"#define DEF_TEXCOORD_INPUT %s\n"
 			"#define DEF_WIREFRAME %s\n",
-			gl_shader_texcoord_input_to_string(req->texcoord_input),
+			gl_shader_texcoord_input_to_string(req->texcoord_input)->symbol,
 			req->wireframe ? "true" : "false");
 
 	if (size < 0)
@@ -279,23 +313,33 @@ create_fragment_shader_config_string(const struct gl_shader_requirements *req)
 
 	size = asprintf(&str,
 			"#define MAX_CURVE_PARAMS %zu\n"
+			"#define DEF_NEED_SWIZZLE_IDX %s\n"
 			"#define DEF_TINT %s\n"
 			"#define DEF_INPUT_IS_PREMULT %s\n"
 			"#define DEF_WIREFRAME %s\n"
 			"#define DEF_COLOR_PRE_CURVE %s\n"
 			"#define DEF_COLOR_MAPPING %s\n"
 			"#define DEF_COLOR_POST_CURVE %s\n"
+			"#define DEF_SHADER_BLENDING %s\n"
+			"#define DEF_FB_ALPHA_ENCODING %s\n"
+			"#define DEF_FB_FETCH_CURVE %s\n"
+			"#define DEF_FB_STORE_CURVE %s\n"
 			"#define DEF_COLOR_EFFECT %s\n"
 			"#define DEF_VARIANT %s\n",
 			ARRAY_LENGTH(((union weston_color_curve_parametric_chan_data){}).data),
+			req->swizzle_idx ? "true" : "false",
 			req->tint ? "true" : "false",
 			req->input_is_premult ? "true" : "false",
 			req->wireframe ? "true" : "false",
-			gl_shader_color_curve_to_string(req->color_pre_curve),
-			gl_shader_color_mapping_to_string(req->color_mapping),
-			gl_shader_color_curve_to_string(req->color_post_curve),
-			gl_shader_color_effect_to_string(req->color_effect),
-			gl_shader_texture_variant_to_string(req->variant));
+			gl_shader_color_curve_to_string(req->color_pre_curve)->symbol,
+			gl_shader_color_mapping_to_string(req->color_mapping)->symbol,
+			gl_shader_color_curve_to_string(req->color_post_curve)->symbol,
+			req->shader_blending ? "1" : "0",
+			gl_shader_fb_alpha_encoding_to_string(req->fb_alpha_encoding)->symbol,
+			gl_shader_color_curve_to_string(req->fb_fetch_curve)->symbol,
+			gl_shader_color_curve_to_string(req->fb_store_curve)->symbol,
+			gl_shader_color_effect_to_string(req->color_effect)->symbol,
+			gl_shader_texture_variant_to_string(req->variant)->symbol);
 	if (size < 0)
 		return NULL;
 	return str;
@@ -448,7 +492,8 @@ gl_shader_create(struct gl_renderer *gr,
 		shader->swizzle_sub[1] = glGetUniformLocation(shader->program, "swizzle_sub[1]");
 		shader->swizzle_sub[2] = glGetUniformLocation(shader->program, "swizzle_sub[2]");
 	}
-	shader->view_alpha_uniform = glGetUniformLocation(shader->program, "view_alpha");
+	shader->paint_node_alpha_uniform =
+		glGetUniformLocation(shader->program, "paint_node_alpha");
 	if (requirements->variant == SHADER_VARIANT_SOLID) {
 		shader->color_uniform = glGetUniformLocation(shader->program,
 							     "unicolor");
@@ -504,8 +549,14 @@ gl_shader_create(struct gl_renderer *gr,
 	shader->yuv_offsets_uniform = glGetUniformLocation(shader->program,
 							   "yuv_offsets");
 
-	free(conf);
+	get_curve_uniform_locations(gr, &shader->fb_fetch_curve,
+				    requirements->fb_fetch_curve,
+				    shader->program, "fb_fetch_curve");
+	get_curve_uniform_locations(gr, &shader->fb_store_curve,
+				    requirements->fb_store_curve,
+				    shader->program, "fb_store_curve");
 
+	free(conf);
 	wl_list_insert(&gr->shader_list, &shader->link);
 
 	return shader;
@@ -812,7 +863,7 @@ gl_shader_texture_variant_get_target(enum gl_shader_texture_variant v)
 }
 
 static void
-gl_shader_load_config(struct gl_renderer *gr,
+gl_shader_load_config(struct gl_renderer *gr, struct weston_paint_node *pnode,
 		      struct gl_shader *shader,
 		      const struct gl_shader_config *sconf)
 {
@@ -822,6 +873,12 @@ gl_shader_load_config(struct gl_renderer *gr,
 	float swizzle_sub[4];
 	int i, j;
 
+	WESTON_TRACE_BEGIN_ANNOTATION();
+	if (pnode) {
+		WESTON_TRACE_ANNOTATE(("paint node flow", &pnode->flow),
+				      ("paint node", pnode->internal_name));
+	}
+
 	glUniformMatrix4fv(shader->proj_uniform,
 			   1, GL_FALSE, sconf->projection.M.colmaj);
 
@@ -829,12 +886,32 @@ gl_shader_load_config(struct gl_renderer *gr,
 		glUniformMatrix4fv(shader->surface_to_buffer_uniform,
 			           1, GL_FALSE, sconf->surface_to_buffer.M.colmaj);
 
-	if (shader->color_uniform != -1)
+	if (shader->color_uniform != -1) {
+		weston_log_scope_printf(gr->paint_node_scope,
+			"\t\tcolor: r: %.2f, g: %.2f, b: %.2f, a: %.2f\n",
+			sconf->unicolor[0], sconf->unicolor[1],
+			sconf->unicolor[2], sconf->unicolor[3]);
+		WESTON_TRACE_ANNOTATE(("color r", sconf->unicolor[0]),
+				      ("color g", sconf->unicolor[1]),
+				      ("color b", sconf->unicolor[2]),
+				      ("color a", sconf->unicolor[3]));
 		glUniform4fv(shader->color_uniform, 1, sconf->unicolor);
-	if (shader->tint_uniform != -1)
+	}
+	if (shader->tint_uniform != -1) {
+		weston_log_scope_printf(gr->paint_node_scope,
+				"\t\ttint: r: %.2f, g: %.2f, b: %.2f, a: %.2f\n",
+				sconf->tint[0], sconf->tint[1],
+				sconf->tint[2], sconf->tint[3]);
+		WESTON_TRACE_ANNOTATE(("tint r", sconf->tint[0]),
+				      ("tint g", sconf->tint[1]),
+				      ("tint b", sconf->tint[2]),
+				      ("tint a", sconf->tint[3]));
 		glUniform4fv(shader->tint_uniform, 1, sconf->tint);
+	}
 
-	glUniform1f(shader->view_alpha_uniform, sconf->view_alpha);
+	weston_log_scope_printf(gr->paint_node_scope, "\t\talpha: %.2f\n", sconf->paint_node_alpha);
+	WESTON_TRACE_ANNOTATE(("alpha", sconf->paint_node_alpha));
+	glUniform1f(shader->paint_node_alpha_uniform, sconf->paint_node_alpha);
 
 	assert(sconf->input_num <= SHADER_INPUT_TEX_MAX);
 	for (i = 0; i < sconf->input_num; i++) {
@@ -860,7 +937,8 @@ gl_shader_load_config(struct gl_renderer *gr,
 					swizzle_sub[j] = (float) swizzles[j];
 				}
 			}
-			glUniform4iv(shader->swizzle_idx[i], 1, swizzle_idx);
+			if (shader->swizzle_idx[i] != -1)
+				glUniform4iv(shader->swizzle_idx[i], 1, swizzle_idx);
 			glUniform4fv(shader->swizzle_mask[i], 1, swizzle_mask);
 			glUniform4fv(shader->swizzle_sub[i], 1, swizzle_sub);
 		}
@@ -873,10 +951,28 @@ gl_shader_load_config(struct gl_renderer *gr,
 			gl_texture_parameters_flush(gr, &sconf->input_param[i]);
 	}
 
-	if (shader->cvd_correction_uniform != -1)
+	switch (sconf->req.color_effect) {
+	case SHADER_COLOR_EFFECT_NONE:
+		break;
+	case SHADER_COLOR_EFFECT_INVERSION:
+		weston_log_scope_printf(gr->paint_node_scope, "\t\tcolor effect: inversion\n");
+		WESTON_TRACE_ANNOTATE(("color effect", "inversion"));
+		break;
+	case SHADER_COLOR_EFFECT_GRAYSCALE:
+		weston_log_scope_printf(gr->paint_node_scope, "\t\tcolor effect: grayscale\n");
+		WESTON_TRACE_ANNOTATE(("color effect", "greyscale"));
+		break;
+	case SHADER_COLOR_EFFECT_CVD_CORRECTION:
+		weston_assert_int_ne(gr->compositor, shader->cvd_correction_uniform, -1);
+		weston_log_scope_printf(gr->paint_node_scope, "\t\tcolor effect: cvd - %s\n",
+					weston_output_cvd_type_to_str(sconf->color_effect.cvd));
 		glUniformMatrix3fv(shader->cvd_correction_uniform,
 				   1, GL_FALSE,
-				   sconf->color_effect.cvd_correction.colmaj);
+				   sconf->color_effect.cvd.correction.colmaj);
+		WESTON_TRACE_ANNOTATE(("color effect",
+				weston_output_cvd_type_to_str(sconf->color_effect.cvd)));
+		break;
+	}
 
 	/* Fixed texture unit for color_pre_curve LUT if it is available */
 	gl_shader_load_config_curve(gr->compositor, sconf->req.color_pre_curve,
@@ -893,17 +989,67 @@ gl_shader_load_config(struct gl_renderer *gr,
 	if (sconf->req.wireframe)
 		glUniform1i(shader->tex_uniform_wireframe, TEX_UNIT_WIREFRAME);
 
+	if (sconf->req.shader_blending) {
+		gl_shader_load_config_curve(gr->compositor, sconf->req.fb_fetch_curve,
+					    &sconf->fb_fetch_curve, &shader->fb_fetch_curve,
+					    TEX_UNIT_FB_FETCH_CURVE);
+		gl_shader_load_config_curve(gr->compositor, sconf->req.fb_store_curve,
+					    &sconf->fb_store_curve, &shader->fb_store_curve,
+					    TEX_UNIT_FB_STORE_CURVE);
+	}
+
+	WESTON_TRACE_COMMIT_ANNOTATION();
+
 	glActiveTexture(GL_TEXTURE0);
 }
 
+static bool
+is_zero_one_chan(GLint x, GLint chan)
+{
+	return x == GL_ZERO || x == GL_ONE || x == chan;
+}
+
+static bool
+textures_need_swizzle_idx(const struct gl_renderer *gr,
+			  const struct gl_texture_parameters *tp,
+			  int tp_num)
+{
+	int i;
+
+	/* If GL supports swizzling natively, we don't need it in the shader. */
+	if (gr->gl_version >= gl_version(3, 0))
+		return false;
+
+	/* If any swizzle need a texture channel value from a different
+	 * channel, we need it in the shader.
+	 */
+	for (i = 0; i < tp_num; i++) {
+		if (!is_zero_one_chan(tp[i].swizzles.r, GL_RED) ||
+		    !is_zero_one_chan(tp[i].swizzles.g, GL_GREEN) ||
+		    !is_zero_one_chan(tp[i].swizzles.b, GL_BLUE) ||
+		    !is_zero_one_chan(tp[i].swizzles.a, GL_ALPHA))
+			return true;
+	}
+
+	/* Everything can be handled with masking, no need. */
+	return false;
+}
+
 bool
-gl_renderer_use_program(struct gl_renderer *gr,
+gl_renderer_use_program(struct gl_renderer *gr, struct weston_paint_node *pnode,
 			const struct gl_shader_config *sconf)
 {
 	static const GLfloat fallback_shader_color[4] = { 0.2, 0.1, 0.0, 1.0 };
+	struct gl_shader_requirements req = sconf->req;
 	struct gl_shader *shader;
 
-	shader = gl_renderer_get_program(gr, &sconf->req);
+	/*
+	 * In order to avoid a performance penalty on Vivante GC NanoUltra,
+	 * skip the shader swizzle if possible.
+	 */
+	req.swizzle_idx = textures_need_swizzle_idx(gr, sconf->input_param, sconf->input_num);
+
+	shader = gl_renderer_get_program(gr, &req);
 	if (!shader) {
 		weston_log("Error: failed to generate shader program.\n");
 		gr->current_shader = NULL;
@@ -919,7 +1065,9 @@ gl_renderer_use_program(struct gl_renderer *gr,
 		shader = gr->fallback_shader;
 		glUseProgram(shader->program);
 		glUniform4fv(shader->color_uniform, 1, fallback_shader_color);
-		glUniform1f(shader->view_alpha_uniform, 1.0f);
+		glUniform1f(shader->paint_node_alpha_uniform, 1.0f);
+		weston_log_scope_printf(gr->paint_node_scope, "\t\tFailed to generate shader program. "
+					"Using the fallback shader\n");
 		return false;
 	}
 
@@ -935,7 +1083,9 @@ gl_renderer_use_program(struct gl_renderer *gr,
 		gr->current_shader = shader;
 	}
 
-	gl_shader_load_config(gr, shader, sconf);
+	weston_log_scope_printf(gr->paint_node_scope,
+				"\t\t\tshader id: %d\n", gr->current_shader->program);
+	gl_shader_load_config(gr, pnode, shader, sconf);
 
 	return true;
 }

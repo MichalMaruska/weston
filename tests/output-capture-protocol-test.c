@@ -30,11 +30,24 @@
 #include "shared/xalloc.h"
 #include "weston-output-capture-client-protocol.h"
 #include "weston-test-assert.h"
+#include "shared/client-buffer-util.h"
 #include "shared/weston-drm-fourcc.h"
+
+#define SKIP_NO_UDMABUF(buffer_type)						  \
+do {										  \
+	enum client_buffer_type type = (buffer_type);				  \
+										  \
+	if (type == CLIENT_BUFFER_TYPE_DMABUF && 				  \
+	    !client_buffer_util_is_dmabuf_supported()) { 			  \
+		testlog("%s: Skipped: udmabuf not supported\n", get_test_name()); \
+		return RESULT_SKIP;						  \
+	} 									  \
+} while (0)
 
 struct setup_args {
 	struct fixture_metadata meta;
 	enum weston_renderer_type renderer;
+	enum client_buffer_type buffer_type;
 	uint32_t expected_drm_format;
 };
 
@@ -42,16 +55,25 @@ static const struct setup_args my_setup_args[] = {
 	{
 		.meta.name = "pixman",
 		.renderer = WESTON_RENDERER_PIXMAN,
+		.buffer_type = CLIENT_BUFFER_TYPE_SHM,
 		.expected_drm_format = DRM_FORMAT_XRGB8888,
 	},
 	{
-		.meta.name = "GL",
+		.meta.name = "GL-shm",
 		.renderer = WESTON_RENDERER_GL,
+		.buffer_type = CLIENT_BUFFER_TYPE_SHM,
+		.expected_drm_format = DRM_FORMAT_ARGB8888,
+	},
+	{
+		.meta.name = "GL-dmabuf",
+		.renderer = WESTON_RENDERER_GL,
+		.buffer_type = CLIENT_BUFFER_TYPE_DMABUF,
 		.expected_drm_format = DRM_FORMAT_ARGB8888,
 	},
 	{
 		.meta.name = "Vulkan",
 		.renderer = WESTON_RENDERER_VULKAN,
+		.buffer_type = CLIENT_BUFFER_TYPE_SHM,
 		.expected_drm_format = DRM_FORMAT_ARGB8888,
 	},
 };
@@ -147,7 +169,7 @@ capture_source_handle_complete(void *data,
 	struct capturer *capt = data;
 
 	test_assert_ptr_eq(capt->source, proxy);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 	capt->state = CAPTURE_TASK_COMPLETE;
 	capt->events.reply = true;
 }
@@ -159,7 +181,7 @@ capture_source_handle_retry(void *data,
 	struct capturer *capt = data;
 
 	test_assert_ptr_eq(capt->source, proxy);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 	capt->state = CAPTURE_TASK_RETRY;
 	capt->events.reply = true;
 }
@@ -172,7 +194,7 @@ capture_source_handle_failed(void *data,
 	struct capturer *capt = data;
 
 	test_assert_ptr_eq(capt->source, proxy);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 	capt->state = CAPTURE_TASK_FAILED;
 	capt->events.reply = true;
 
@@ -223,12 +245,15 @@ capturer_destroy(struct capturer *capt)
  * Use the guaranteed source and all the right parameters to check that
  * shooting succeeds on the first try.
  */
-TEST(simple_shot)
+static enum test_result_code
+simple_shot(struct wet_testsuite_data *suite_data)
 {
 	const struct setup_args *fix = &my_setup_args[get_test_fixture_index()];
 	struct client *client;
 	struct capturer *capt;
 	struct buffer *buf;
+
+	SKIP_NO_UDMABUF(fix->buffer_type);
 
 	client = create_client();
 	capt = capturer_create(client, client->output,
@@ -238,21 +263,21 @@ TEST(simple_shot)
 	test_assert_true(capt->events.format);
 	test_assert_true(capt->events.formats_done);
 	test_assert_true(capt->events.size);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 	test_assert_u32_eq(capt->drm_format, fix->expected_drm_format);
 	test_assert_int_gt(capt->width, 0);
 	test_assert_int_gt(capt->height, 0);
 	test_assert_false(capt->events.reply);
 
-	buf = create_shm_buffer(client, capt->width, capt->height,
-				fix->expected_drm_format);
+	buf = create_buffer(client, capt->width, capt->height,
+			    fix->expected_drm_format, fix->buffer_type);
 
 	weston_capture_source_v1_capture(capt->source, buf->proxy);
 	while (!capt->events.reply)
 		if (!test_assert_int_ge(wl_display_dispatch(client->wl_display), 0))
 			return RESULT_FAIL;
 
-	test_assert_enum(capt->state, CAPTURE_TASK_COMPLETE);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_COMPLETE);
 
 	capturer_destroy(capt);
 	buffer_destroy(buf);
@@ -265,12 +290,16 @@ TEST(simple_shot)
  * Use a guaranteed source, but use an unsupported pixel format.
  * This should always cause a retry.
  */
-TEST(retry_on_wrong_format)
+static enum test_result_code
+retry_on_wrong_format(struct wet_testsuite_data *suite_data)
 {
+	const struct setup_args *fix = &my_setup_args[get_test_fixture_index()];
 	const uint32_t drm_format = DRM_FORMAT_ABGR2101010;
 	struct client *client;
 	struct capturer *capt;
 	struct buffer *buf;
+
+	SKIP_NO_UDMABUF(fix->buffer_type);
 
 	client = create_client();
 	capt = capturer_create(client, client->output,
@@ -280,7 +309,7 @@ TEST(retry_on_wrong_format)
 	test_assert_true(capt->events.format);
 	test_assert_true(capt->events.formats_done);
 	test_assert_true(capt->events.size);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 
 	/* Fix this test if triggered. */
 	test_assert_u32_ne(capt->drm_format, drm_format);
@@ -289,14 +318,15 @@ TEST(retry_on_wrong_format)
 	test_assert_int_gt(capt->height, 0);
 	test_assert_false(capt->events.reply);
 
-	buf = create_shm_buffer(client, capt->width, capt->height, drm_format);
+	buf = create_buffer(client, capt->width, capt->height,
+			    drm_format, fix->buffer_type);
 
 	weston_capture_source_v1_capture(capt->source, buf->proxy);
 	while (!capt->events.reply)
 		if (!test_assert_int_ge(wl_display_dispatch(client->wl_display), 0))
 			return RESULT_FAIL;
 
-	test_assert_enum(capt->state, CAPTURE_TASK_RETRY);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_RETRY);
 
 	capturer_destroy(capt);
 	buffer_destroy(buf);
@@ -309,11 +339,15 @@ TEST(retry_on_wrong_format)
  * Use a guaranteed source, but use a smaller buffer size.
  * This should always cause a retry.
  */
-TEST(retry_on_wrong_size)
+static enum test_result_code
+retry_on_wrong_size(struct wet_testsuite_data *suite_data)
 {
+	const struct setup_args *fix = &my_setup_args[get_test_fixture_index()];
 	struct client *client;
 	struct capturer *capt;
 	struct buffer *buf;
+
+	SKIP_NO_UDMABUF(fix->buffer_type);
 
 	client = create_client();
 	capt = capturer_create(client, client->output,
@@ -323,20 +357,20 @@ TEST(retry_on_wrong_size)
 	test_assert_true(capt->events.format);
 	test_assert_true(capt->events.formats_done);
 	test_assert_true(capt->events.size);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 	test_assert_int_gt(capt->width, 5);
 	test_assert_int_gt(capt->height, 5);
 	test_assert_false(capt->events.reply);
 
-	buf = create_shm_buffer(client, capt->width - 3, capt->height - 3,
-				capt->drm_format);
+	buf = create_buffer(client, capt->width - 3, capt->height - 3,
+			    fix->expected_drm_format, fix->buffer_type);
 
 	weston_capture_source_v1_capture(capt->source, buf->proxy);
 	while (!capt->events.reply)
 		if (!test_assert_int_ge(wl_display_dispatch(client->wl_display), 0))
 			return RESULT_FAIL;
 
-	test_assert_enum(capt->state, CAPTURE_TASK_RETRY);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_RETRY);
 
 	capturer_destroy(capt);
 	buffer_destroy(buf);
@@ -349,7 +383,8 @@ TEST(retry_on_wrong_size)
  * Try a source that is guaranteed to not exist, and check that
  * capturing fails.
  */
-TEST(writeback_on_headless_fails)
+static enum test_result_code
+writeback_on_headless_fails(struct wet_testsuite_data *suite_data)
 {
 	struct client *client;
 	struct capturer *capt;
@@ -364,7 +399,7 @@ TEST(writeback_on_headless_fails)
 	test_assert_false(capt->events.format);
 	test_assert_false(capt->events.formats_done);
 	test_assert_false(capt->events.size);
-	test_assert_enum(capt->state, CAPTURE_TASK_PENDING);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_PENDING);
 
 	/* Trying pixel source that is not available should fail immediately */
 	weston_capture_source_v1_capture(capt->source, buf->proxy);
@@ -373,7 +408,7 @@ TEST(writeback_on_headless_fails)
 	test_assert_false(capt->events.format);
 	test_assert_false(capt->events.formats_done);
 	test_assert_false(capt->events.size);
-	test_assert_enum(capt->state, CAPTURE_TASK_FAILED);
+	test_assert_enum_eq(capt->state, CAPTURE_TASK_FAILED);
 	test_assert_str_eq(capt->last_failure, "source unavailable");
 
 	capturer_destroy(capt);
@@ -382,3 +417,10 @@ TEST(writeback_on_headless_fails)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(simple_shot),
+	TESTFN(retry_on_wrong_format),
+	TESTFN(retry_on_wrong_size),
+	TESTFN(writeback_on_headless_fails),
+);

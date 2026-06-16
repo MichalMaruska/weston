@@ -169,12 +169,15 @@ commit_buffer_with_damage(struct surface *surface,
 
 /*
  * Test that Weston repaints exactly the damage a client sends to it.
+ * Also ensure that damage regions are correctly transformed through the output
+ * transform and scale all way to the framebuffer coordinates by the renderers.
  *
  * NOTE: This relies on the Weston implementation detail that Weston actually
  * will repaint exactly the client's damage and nothing more. This is not
  * generally true of Wayland compositors.
  */
-TEST(output_damage)
+static enum test_result_code
+output_damage(struct wet_testsuite_data *suite_data)
 {
 #define COUNT_BUFS 3
 	const struct setup_args *oargs;
@@ -239,3 +242,7 @@ TEST(output_damage)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(output_damage),
+);

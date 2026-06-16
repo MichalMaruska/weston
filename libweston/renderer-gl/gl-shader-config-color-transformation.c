@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Collabora, Ltd.
+ * Copyright 2021,2026 Collabora, Ltd.
  * Copyright 2021 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -31,10 +31,12 @@
 
 #include <libweston/libweston.h>
 #include "color.h"
+#include "color-operations.h"
 #include "color-properties.h"
 #include "gl-renderer.h"
 #include "gl-renderer-internal.h"
 
+#include "shared/xalloc.h"
 #include "shared/weston-assert.h"
 #include "shared/weston-egl-ext.h"
 
@@ -61,6 +63,13 @@ struct gl_renderer_color_effect {
 	struct wl_listener destroy_listener;
 	enum gl_shader_color_effect type;
 	union gl_shader_config_color_effect u;
+};
+
+/** for in-shader blending */
+struct gl_shader_blender {
+	enum gl_shader_fb_alpha_encoding fb_alpha_encoding;
+	struct gl_renderer_color_curve fb_fetch_curve;
+	struct gl_renderer_color_curve fb_store_curve;
 };
 
 static void
@@ -268,6 +277,50 @@ out:
 	return ret;
 }
 
+static bool
+gl_color_curve_init(struct gl_renderer *gr,
+		    struct gl_renderer_color_curve *gl_curve,
+		    const struct weston_color_curve *curve,
+		    struct weston_color_transform *xform)
+{
+	switch (curve->type) {
+	case WESTON_COLOR_CURVE_TYPE_IDENTITY:
+		*gl_curve = (struct gl_renderer_color_curve){
+			.type = SHADER_COLOR_CURVE_IDENTITY,
+		};
+		return true;
+	case WESTON_COLOR_CURVE_TYPE_LUT_3x1D:
+		weston_assert_ptr_not_null(gr->compositor, xform);
+		return gl_color_curve_lut_3x1d(gr, gl_curve, curve, xform);
+	case WESTON_COLOR_CURVE_TYPE_PARAMETRIC:
+		return gl_color_curve_parametric(gr, gl_curve, curve);
+	case WESTON_COLOR_CURVE_TYPE_ENUM:
+		return gl_color_curve_enum(gr, gl_curve, curve);
+	}
+
+	weston_assert_not_reached(gr->compositor, "invalid weston_color_curve_type");
+}
+
+static void
+gl_color_mapping_init(struct gl_renderer *gr,
+		      struct gl_renderer_color_mapping *gl_mapping,
+		      const struct weston_color_mapping *mapping)
+{
+	switch (mapping->type) {
+	case WESTON_COLOR_MAPPING_TYPE_IDENTITY:
+		*gl_mapping = (struct gl_renderer_color_mapping){
+			.type = SHADER_COLOR_MAPPING_IDENTITY,
+		};
+		return;
+	case WESTON_COLOR_MAPPING_TYPE_MATRIX:
+		gl_mapping->type = SHADER_COLOR_MAPPING_MATRIX;
+		gl_mapping->u.mat = mapping->u.mat;
+		return;
+	}
+
+	weston_assert_not_reached(gr->compositor, "invalid weston_color_mapping_type");
+}
+
 static void
 gl_color_mapping_lut_3d_init(struct gl_renderer *gr,
 			     struct gl_renderer_color_mapping *gl_mapping,
@@ -295,76 +348,22 @@ static const struct gl_renderer_color_transform *
 gl_renderer_color_transform_create_steps(struct gl_renderer *gr,
 					 struct weston_color_transform *xform)
 {
-	static const struct gl_renderer_color_transform no_op_gl_xform = {
-		.pre_curve.type = SHADER_COLOR_CURVE_IDENTITY,
-		.mapping.type = SHADER_COLOR_MAPPING_IDENTITY,
-		.post_curve.type = SHADER_COLOR_CURVE_IDENTITY,
-	};
 	struct gl_renderer_color_transform *gl_xform;
-	bool ok = false;
 
 	gl_xform = gl_renderer_color_transform_create(xform);
 	if (!gl_xform)
 		return NULL;
 
-	switch (xform->pre_curve.type) {
-	case WESTON_COLOR_CURVE_TYPE_IDENTITY:
-		gl_xform->pre_curve = no_op_gl_xform.pre_curve;
-		ok = true;
-		break;
-	case WESTON_COLOR_CURVE_TYPE_LUT_3x1D:
-		ok = gl_color_curve_lut_3x1d(gr, &gl_xform->pre_curve,
-					     &xform->pre_curve, xform);
-		break;
-	case WESTON_COLOR_CURVE_TYPE_PARAMETRIC:
-		ok = gl_color_curve_parametric(gr, &gl_xform->pre_curve,
-					       &xform->pre_curve);
-		break;
-	case WESTON_COLOR_CURVE_TYPE_ENUM:
-		ok = gl_color_curve_enum(gr, &gl_xform->pre_curve,
-					 &xform->pre_curve);
-		break;
-	}
-	if (!ok) {
+	if (!gl_color_curve_init(gr, &gl_xform->pre_curve,
+				 &xform->pre_curve, xform)) {
 		gl_renderer_color_transform_destroy(gl_xform);
 		return NULL;
 	}
 
-	switch (xform->mapping.type) {
-	case WESTON_COLOR_MAPPING_TYPE_IDENTITY:
-		gl_xform->mapping = no_op_gl_xform.mapping;
-		ok = true;
-		break;
-	case WESTON_COLOR_MAPPING_TYPE_MATRIX:
-		gl_xform->mapping.type = SHADER_COLOR_MAPPING_MATRIX;
-		gl_xform->mapping.u.mat = xform->mapping.u.mat;
-		ok = true;
-		break;
-	}
-	if (!ok) {
-		gl_renderer_color_transform_destroy(gl_xform);
-		return NULL;
-	}
+	gl_color_mapping_init(gr, &gl_xform->mapping, &xform->mapping);
 
-	switch (xform->post_curve.type) {
-	case WESTON_COLOR_CURVE_TYPE_IDENTITY:
-		gl_xform->post_curve = no_op_gl_xform.post_curve;
-		ok = true;
-		break;
-	case WESTON_COLOR_CURVE_TYPE_LUT_3x1D:
-		ok = gl_color_curve_lut_3x1d(gr, &gl_xform->post_curve,
-					     &xform->post_curve, xform);
-		break;
-	case WESTON_COLOR_CURVE_TYPE_PARAMETRIC:
-		ok = gl_color_curve_parametric(gr, &gl_xform->post_curve,
-					       &xform->post_curve);
-		break;
-	case WESTON_COLOR_CURVE_TYPE_ENUM:
-		ok = gl_color_curve_enum(gr, &gl_xform->post_curve,
-					 &xform->post_curve);
-		break;
-	}
-	if (!ok) {
+	if (!gl_color_curve_init(gr, &gl_xform->post_curve,
+				 &xform->post_curve, xform)) {
 		gl_renderer_color_transform_destroy(gl_xform);
 		return NULL;
 	}
@@ -378,9 +377,9 @@ gl_renderer_color_transform_create_3dlut(struct gl_renderer *gr,
 {
 	struct gl_renderer_color_transform *gl_xform = NULL;
 	float *shaper = NULL;
-	float *lut3d = NULL;
-	float len_shaper;
-	float len_lut3d;
+	float *clut = NULL;
+	uint32_t len_shaper;
+	uint32_t len_clut;
 	bool ok;
 
 	/**
@@ -388,22 +387,21 @@ gl_renderer_color_transform_create_3dlut(struct gl_renderer *gr,
 	 * excessive memory consumption.
 	 */
 	len_shaper = 1024;
-	len_lut3d = 33;
+	len_clut = 33;
 
 	shaper = zalloc(len_shaper * 3 * sizeof(*shaper));
 	if (!shaper)
 		goto err;
 
-	lut3d = zalloc(3 * len_lut3d * len_lut3d * len_lut3d * sizeof(*lut3d));
-	if (!lut3d)
+	clut = zalloc(3 * len_clut * len_clut * len_clut * sizeof(*clut));
+	if (!clut)
 		goto err;
 
 	gl_xform = gl_renderer_color_transform_create(xform);
 	if (!gl_xform)
 		goto err;
 
-	ok = xform->to_shaper_plus_3dlut(xform, len_shaper, shaper,
-					 len_lut3d, lut3d);
+	ok = xform->to_clut(xform, len_shaper, shaper, len_clut, clut);
 	if (!ok)
 		goto err;
 
@@ -413,18 +411,18 @@ gl_renderer_color_transform_create_3dlut(struct gl_renderer *gr,
 		goto err;
 
 	gl_color_mapping_lut_3d_init(gr, &gl_xform->mapping,
-				     len_lut3d, lut3d);
+				     len_clut, clut);
 
 	free(shaper);
-	free(lut3d);
+	free(clut);
 
 	return gl_xform;
 
 err:
 	if (shaper)
 		free(shaper);
-	if (lut3d)
-		free(lut3d);
+	if (clut)
+		free(clut);
 	if (gl_xform)
 		gl_renderer_color_transform_destroy(gl_xform);
 	return NULL;
@@ -563,13 +561,99 @@ gl_shader_config_set_color_effect(struct gl_renderer *gr,
 	case WESTON_OUTPUT_COLOR_EFFECT_TYPE_INVERSION:
 		sconf->req.color_effect = SHADER_COLOR_EFFECT_INVERSION;
 		break;
+	case WESTON_OUTPUT_COLOR_EFFECT_TYPE_GRAYSCALE:
+		sconf->req.color_effect = SHADER_COLOR_EFFECT_GRAYSCALE;
+		break;
 	case WESTON_OUTPUT_COLOR_EFFECT_TYPE_CVD_CORRECTION:
 		sconf->req.color_effect = SHADER_COLOR_EFFECT_CVD_CORRECTION;
-		sconf->color_effect.cvd_correction = effect->u.cvd.correction;
+		sconf->color_effect.cvd.correction = effect->u.cvd.correction;
+		sconf->color_effect.cvd.type = effect->u.cvd.type;
 		break;
 	}
 	weston_assert_u32_ne(gr->compositor, sconf->req.color_effect,
 			     SHADER_COLOR_EFFECT_NONE);
 
 	return true;
+}
+
+void
+gl_shader_blender_destroy(struct gl_shader_blender *shader_blender)
+{
+	if (!shader_blender)
+		return;
+
+	gl_renderer_color_curve_fini(&shader_blender->fb_fetch_curve);
+	gl_renderer_color_curve_fini(&shader_blender->fb_store_curve);
+	free(shader_blender);
+}
+
+struct gl_shader_blender *
+gl_shader_blender_create(struct gl_renderer *gr, struct weston_output *output,
+			 enum gl_shader_fb_alpha_encoding fb_alpha_encoding)
+{
+	struct gl_shader_blender *shader_blender;
+	struct weston_color_curve *fb_fetch;
+	const struct weston_color_curve *fb_store;
+	const struct weston_color_transform *xform;
+	const struct weston_color_curve identity_curve = {
+		.type = WESTON_COLOR_CURVE_TYPE_IDENTITY,
+	};
+	bool ok;
+
+	if (!gl_features_has(gr, FEATURE_SHADER_BLENDING))
+		return NULL;
+
+	shader_blender = xzalloc(sizeof *shader_blender);
+	shader_blender->fb_alpha_encoding = fb_alpha_encoding;
+
+	xform = output->color_outcome->from_blend_to_output;
+	if (xform) {
+		fb_store = weston_color_transform_as_single_curve(xform);
+		if (!fb_store)
+			goto fail;
+
+		fb_fetch = weston_color_curve_create_inverse(fb_store);
+		if (!fb_fetch)
+			goto fail;
+
+		ok = gl_color_curve_init(gr, &shader_blender->fb_store_curve, fb_store, NULL) &&
+		     gl_color_curve_init(gr, &shader_blender->fb_fetch_curve, fb_fetch, NULL);
+
+		free(fb_fetch);
+	} else {
+		ok = gl_color_curve_init(gr, &shader_blender->fb_store_curve, &identity_curve, NULL) &&
+		     gl_color_curve_init(gr, &shader_blender->fb_fetch_curve, &identity_curve, NULL);
+	}
+
+	if (!ok)
+		goto fail;
+
+	return shader_blender;
+
+fail:
+	free(shader_blender);
+	return NULL;
+}
+
+void
+gl_shader_config_set_blender(struct gl_renderer *gr,
+			     struct gl_shader_config *sconf,
+			     const struct gl_shader_blender *shader_blender)
+{
+	if (shader_blender) {
+		sconf->req.shader_blending = true;
+
+		sconf->req.fb_fetch_curve = shader_blender->fb_fetch_curve.type;
+		sconf->fb_fetch_curve = shader_blender->fb_fetch_curve.u;
+
+		sconf->req.fb_store_curve = shader_blender->fb_store_curve.type;
+		sconf->fb_store_curve = shader_blender->fb_store_curve.u;
+
+		sconf->req.fb_alpha_encoding = shader_blender->fb_alpha_encoding;
+	} else {
+		sconf->req.shader_blending = false;
+		sconf->req.fb_fetch_curve = SHADER_COLOR_CURVE_IDENTITY;
+		sconf->req.fb_store_curve = SHADER_COLOR_CURVE_IDENTITY;
+		sconf->req.fb_alpha_encoding = SHADER_FB_ALPHA_PREMULT;
+	}
 }

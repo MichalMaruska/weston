@@ -51,20 +51,6 @@ fixture_setup(struct weston_test_harness *harness)
 }
 DECLARE_FIXTURE_SETUP(fixture_setup);
 
-static struct buffer *
-surface_commit_color(struct client *client, struct wl_surface *surface,
-		     pixman_color_t *color, int width, int height)
-{
-	struct buffer *buf;
-
-	buf = create_shm_buffer_solid(client, width, height, color);
-	wl_surface_attach(surface, buf->proxy, 0, 0);
-	wl_surface_damage_buffer(surface, 0, 0, width, height);
-	wl_surface_commit(surface);
-
-	return buf;
-}
-
 #define DECLARE_LIST_ITERATOR(name, parent, list, child, link)			\
 static child *									\
 next_##name(parent *from, child *pos)						\
@@ -91,8 +77,8 @@ get_paint_node_status(struct client *client,
 		struct weston_output *output;
 		struct weston_head *head;
 
-		test_assert_enum(breakpoint->template_->breakpoint,
-				 WESTON_TEST_BREAKPOINT_POST_REPAINT);
+		test_assert_enum_eq(breakpoint->template_->breakpoint,
+				    WESTON_TEST_BREAKPOINT_POST_REPAINT);
 		compositor = breakpoint->compositor;
 		head = breakpoint->resource;
 		output = next_output(compositor, NULL);
@@ -106,9 +92,9 @@ get_paint_node_status(struct client *client,
 }
 
 
-TEST(paint_node_status_on_repaint)
+static enum test_result_code
+paint_node_status_on_repaint(struct wet_testsuite_data *suite_data)
 {
-	struct wet_testsuite_data *suite_data = TEST_GET_SUITE_DATA();
 	struct client *client;
 	struct buffer *buf1, *buf2, *buf3;
 	enum weston_paint_node_status changes;
@@ -130,7 +116,7 @@ TEST(paint_node_status_on_repaint)
 				 50, 50);
 	buf1 = surface_commit_color(client, client->surface->wl_surface, &red, 100, 100);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes, WESTON_PAINT_NODE_ALL_DIRTY);
+	test_assert_enum_eq(changes, WESTON_PAINT_NODE_ALL_DIRTY);
 
 	/* move the surface */
 	client_push_breakpoint(client, suite_data,
@@ -142,10 +128,10 @@ TEST(paint_node_status_on_repaint)
 	wl_surface_damage_buffer(client->surface->wl_surface, 0, 0, 200, 200);
 	wl_surface_commit(client->surface->wl_surface);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes,
-			 (WESTON_PAINT_NODE_BUFFER_DIRTY |
-			  WESTON_PAINT_NODE_VIEW_DIRTY |
-			  WESTON_PAINT_NODE_VISIBILITY_DIRTY));
+	test_assert_enum_eq(changes,
+			    (WESTON_PAINT_NODE_BUFFER_DIRTY |
+			     WESTON_PAINT_NODE_VIEW_DIRTY |
+			     WESTON_PAINT_NODE_VISIBILITY_DIRTY));
 
 	/* a new buffer */
 	client_push_breakpoint(client, suite_data,
@@ -153,7 +139,7 @@ TEST(paint_node_status_on_repaint)
 			       (struct wl_proxy *) client->output->wl_output);
 	buf2 = surface_commit_color(client, client->surface->wl_surface, &red, 100, 100);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes, WESTON_PAINT_NODE_BUFFER_DIRTY);
+	test_assert_enum_eq(changes, WESTON_PAINT_NODE_BUFFER_DIRTY);
 
 	/* a buffer with updated dimensions */
 	client_push_breakpoint(client, suite_data,
@@ -161,10 +147,10 @@ TEST(paint_node_status_on_repaint)
 			       (struct wl_proxy *) client->output->wl_output);
 	buf3 = surface_commit_color(client, client->surface->wl_surface, &red, 200, 200);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes,
-			 (WESTON_PAINT_NODE_BUFFER_DIRTY |
-			  WESTON_PAINT_NODE_VIEW_DIRTY |
-			  WESTON_PAINT_NODE_VISIBILITY_DIRTY));
+	test_assert_enum_eq(changes,
+			    (WESTON_PAINT_NODE_BUFFER_DIRTY |
+			     WESTON_PAINT_NODE_VIEW_DIRTY |
+			     WESTON_PAINT_NODE_VISIBILITY_DIRTY));
 
 	/* an opaque buffer moving will change visibility */
 	client_push_breakpoint(client, suite_data,
@@ -177,10 +163,10 @@ TEST(paint_node_status_on_repaint)
 	wl_surface_damage_buffer(client->surface->wl_surface, 0, 0, 200, 200);
 	wl_surface_commit(client->surface->wl_surface);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes,
-			 (WESTON_PAINT_NODE_BUFFER_DIRTY |
-			  WESTON_PAINT_NODE_VIEW_DIRTY |
-			  WESTON_PAINT_NODE_VISIBILITY_DIRTY));
+	test_assert_enum_eq(changes,
+			    (WESTON_PAINT_NODE_BUFFER_DIRTY |
+			     WESTON_PAINT_NODE_VIEW_DIRTY |
+			     WESTON_PAINT_NODE_VISIBILITY_DIRTY));
 
 	/* a new surface rebuilds the view list */
 	client_push_breakpoint(client, suite_data,
@@ -194,7 +180,7 @@ TEST(paint_node_status_on_repaint)
 	wl_surface_damage_buffer(new_surf->wl_surface, 0, 0, 200, 200);
 	wl_surface_commit(new_surf->wl_surface);
 	changes = get_paint_node_status(client, suite_data);
-	test_assert_enum(changes, WESTON_PAINT_NODE_ALL_DIRTY);
+	test_assert_enum_eq(changes, WESTON_PAINT_NODE_ALL_DIRTY);
 
 	buffer_destroy(buf1);
 	buffer_destroy(buf2);
@@ -206,9 +192,9 @@ TEST(paint_node_status_on_repaint)
 }
 
 
-TEST(top_surface_present_in_output_repaint)
+static enum test_result_code
+top_surface_present_in_output_repaint(struct wet_testsuite_data *suite_data)
 {
-	struct wet_testsuite_data *suite_data = TEST_GET_SUITE_DATA();
 	struct client *client;
 	struct buffer *buf;
 	pixman_color_t red;
@@ -236,8 +222,8 @@ TEST(top_surface_present_in_output_repaint)
 		struct weston_surface *surface;
 		struct weston_buffer *buffer;
 
-		test_assert_enum(breakpoint->template_->breakpoint,
-				 WESTON_TEST_BREAKPOINT_POST_REPAINT);
+		test_assert_enum_eq(breakpoint->template_->breakpoint,
+				    WESTON_TEST_BREAKPOINT_POST_REPAINT);
 		compositor = breakpoint->compositor;
 		head = breakpoint->resource;
 		output = next_output(compositor, NULL);
@@ -260,7 +246,7 @@ TEST(top_surface_present_in_output_repaint)
 		test_assert_s32_eq(surface->height, 100);
 		test_assert_s32_eq(buffer->width, surface->width);
 		test_assert_s32_eq(buffer->height, surface->height);
-		test_assert_enum(buffer->type, WESTON_BUFFER_SHM);
+		test_assert_enum_eq(buffer->type, WESTON_BUFFER_SHM);
 	}
 
 	buffer_destroy(buf);
@@ -269,9 +255,9 @@ TEST(top_surface_present_in_output_repaint)
 	return RESULT_OK;
 }
 
-TEST(test_surface_unmaps_on_null)
+static enum test_result_code
+test_surface_unmaps_on_null(struct wet_testsuite_data *suite_data)
 {
-	struct wet_testsuite_data *suite_data = TEST_GET_SUITE_DATA();
 	struct client *client;
 	struct buffer *buf;
 	pixman_color_t red;
@@ -299,8 +285,8 @@ TEST(test_surface_unmaps_on_null)
 		struct weston_surface *surface;
 		struct weston_buffer *buffer;
 
-		test_assert_enum(breakpoint->template_->breakpoint,
-				 WESTON_TEST_BREAKPOINT_POST_REPAINT);
+		test_assert_enum_eq(breakpoint->template_->breakpoint,
+				    WESTON_TEST_BREAKPOINT_POST_REPAINT);
 		compositor = breakpoint->compositor;
 		head = breakpoint->resource;
 		output = next_output(compositor, NULL);
@@ -322,7 +308,7 @@ TEST(test_surface_unmaps_on_null)
 		test_assert_s32_eq(surface->height, 100);
 		test_assert_s32_eq(buffer->width, surface->width);
 		test_assert_s32_eq(buffer->height, surface->height);
-		test_assert_enum(buffer->type, WESTON_BUFFER_SHM);
+		test_assert_enum_eq(buffer->type, WESTON_BUFFER_SHM);
 
 		REARM_BREAKPOINT(breakpoint);
 	}
@@ -339,8 +325,8 @@ TEST(test_surface_unmaps_on_null)
 		struct weston_surface *surface;
 		struct weston_buffer *buffer;
 
-		test_assert_enum(breakpoint->template_->breakpoint,
-				 WESTON_TEST_BREAKPOINT_POST_REPAINT);
+		test_assert_enum_eq(breakpoint->template_->breakpoint,
+				    WESTON_TEST_BREAKPOINT_POST_REPAINT);
 		compositor = breakpoint->compositor;
 		head = breakpoint->resource;
 		output = next_output(compositor, NULL);
@@ -356,7 +342,7 @@ TEST(test_surface_unmaps_on_null)
 		surface = view->surface;
 		buffer = surface->buffer_ref.buffer;
 		test_assert_ptr_null(surface->resource);
-		test_assert_enum(buffer->type, WESTON_BUFFER_SOLID);
+		test_assert_enum_eq(buffer->type, WESTON_BUFFER_SOLID);
 	}
 
 	buffer_destroy(buf);
@@ -364,3 +350,9 @@ TEST(test_surface_unmaps_on_null)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(paint_node_status_on_repaint),
+	TESTFN(top_surface_present_in_output_repaint),
+	TESTFN(test_surface_unmaps_on_null),
+);

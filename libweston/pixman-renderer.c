@@ -109,41 +109,6 @@ get_renderer(struct weston_compositor *ec)
 	return (struct pixman_renderer *)ec->renderer;
 }
 
-static int
-pixman_renderer_read_pixels(struct weston_output *output,
-			    const struct pixel_format_info *format, void *pixels,
-			    uint32_t x, uint32_t y,
-			    uint32_t width, uint32_t height)
-{
-	struct pixman_output_state *po = get_output_state(output);
-	pixman_image_t *out_buf;
-
-	if (!po->hw_buffer) {
-		errno = ENODEV;
-		return -1;
-	}
-
-	out_buf = pixman_image_create_bits(format->pixman_format,
-		width,
-		height,
-		pixels,
-		(PIXMAN_FORMAT_BPP(format->pixman_format) / 8) * width);
-
-	pixman_image_composite32(PIXMAN_OP_SRC,
-				 po->hw_buffer, /* src */
-				 NULL /* mask */,
-				 out_buf, /* dest */
-				 x, y, /* src_x, src_y */
-				 0, 0, /* mask_x, mask_y */
-				 0, 0, /* dest_x, dest_y */
-				 po->fb_size.width, /* width */
-				 po->fb_size.height /* height */);
-
-	pixman_image_unref(out_buf);
-
-	return 0;
-}
-
 #define D2F(v) pixman_double_to_fixed((double)v)
 
 static void
@@ -317,10 +282,9 @@ repaint_region(struct weston_paint_node *pnode,
 	       pixman_op_t pixman_op)
 {
 	struct weston_output *output = pnode->output;
-	struct weston_view *ev = pnode->view;
 	struct pixman_renderer *pr =
 		(struct pixman_renderer *) output->compositor->renderer;
-	struct pixman_surface_state *ps = get_surface_state(ev->surface);
+	struct pixman_surface_state *ps = get_surface_state(pnode->surface);
 	struct pixman_output_state *po = get_output_state(output);
 	pixman_image_t *target_image;
 	pixman_transform_t transform;
@@ -347,8 +311,8 @@ repaint_region(struct weston_paint_node *pnode,
 	if (ps->buffer_ref.buffer)
 		wl_shm_buffer_begin_access(ps->buffer_ref.buffer->shm_buffer);
 
-	if (ev->alpha < 1.0) {
-		mask.alpha = 0xffff * ev->alpha;
+	if (pnode->alpha < 1.0) {
+		mask.alpha = 0xffff * pnode->alpha;
 		mask_image = pixman_image_create_solid_fill(&mask);
 	} else {
 		mask_image = NULL;
@@ -402,7 +366,7 @@ draw_node_translated(struct weston_paint_node *pnode,
 	pixman_region32_init_rect(&surface_blend, 0, 0,
 				  surface->width, surface->height);
 
-	if (!(view->alpha < 1.0)) {
+	if (!(pnode->alpha < 1.0)) {
 		pixman_region32_subtract(&surface_blend, &surface_blend,
 					 &surface->opaque);
 
@@ -984,6 +948,12 @@ pixman_renderer_destroy_renderbuffer(weston_renderbuffer_t renderbuffer)
 }
 
 static bool
+pixman_renderer_can_render_straight_alpha(struct weston_compositor *wc)
+{
+	return false;
+}
+
+static bool
 pixman_renderer_discard_renderbuffers(struct pixman_output_state *po,
 				      bool destroy)
 {
@@ -1104,7 +1074,6 @@ pixman_renderer_init(struct weston_compositor *ec)
 
 	renderer->repaint_debug = 0;
 	renderer->debug_color = NULL;
-	renderer->base.read_pixels = pixman_renderer_read_pixels;
 	renderer->base.repaint_output = pixman_renderer_repaint_output;
 	renderer->base.resize_output = pixman_renderer_resize_output;
 	renderer->base.flush_damage = pixman_renderer_flush_damage;
@@ -1117,6 +1086,8 @@ pixman_renderer_init(struct weston_compositor *ec)
 	renderer->base.create_renderbuffer_dmabuf = NULL;
 	renderer->base.destroy_renderbuffer =
 		pixman_renderer_destroy_renderbuffer;
+	renderer->base.can_render_straight_alpha =
+		pixman_renderer_can_render_straight_alpha;
 	renderer->base.type = WESTON_RENDERER_PIXMAN;
 	renderer->base.pixman = &pixman_renderer_interface;
 	ec->renderer = &renderer->base;
@@ -1198,6 +1169,13 @@ pixman_renderer_output_create(struct weston_output *output,
 	};
 
 	assert(!get_output_state(output));
+
+	if (output->fb_alpha_encoding == WESTON_OUTPUT_FB_ALPHA_STRAIGHT &&
+	    !pixman_renderer_can_render_straight_alpha(output->compositor)) {
+		weston_log("Error: straight alpha framebuffers required for output '%s' but\n"
+			   "Pixman-renderer does not support that.", output->name);
+		return -1;
+	}
 
 	po = zalloc(sizeof *po);
 	if (po == NULL)

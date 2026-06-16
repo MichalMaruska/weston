@@ -42,6 +42,8 @@
 #include <libweston/config-parser.h>
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
+#include "shared/string-helpers.h"
+#include "shared/xalloc.h"
 #include <libweston/shell-utils.h>
 #include <libweston/desktop.h>
 
@@ -153,13 +155,15 @@ desktop_shell_destroy_surface(struct shell_surface *shsurf)
 	wl_list_remove(&shsurf->link);
 	weston_view_destroy(shsurf->view);
 
-	wl_signal_emit(&shsurf->destroy_signal, shsurf);
+	wl_signal_emit_mutable(&shsurf->destroy_signal, shsurf);
 	weston_surface_unref(shsurf->wsurface_anim_fade);
 
 	if (shsurf->output_destroy_listener.notify) {
 		wl_list_remove(&shsurf->output_destroy_listener.link);
 		shsurf->output_destroy_listener.notify = NULL;
 	}
+
+	wl_list_remove(&shsurf->surface_label_update.link);
 
 	free(shsurf);
 }
@@ -394,13 +398,6 @@ shell_configuration(struct desktop_shell *shell)
 	return true;
 }
 
-static int
-focus_surface_get_label(struct weston_surface *surface, char *buf, size_t len)
-{
-	return snprintf(buf, len, "focus highlight effect for output %s",
-			(surface->output ? surface->output->name : "NULL"));
-}
-
 /* no-op func for checking focus surface */
 static void
 focus_surface_committed(struct weston_surface *es,
@@ -424,7 +421,6 @@ create_focus_surface(struct weston_compositor *ec,
 		.pos = output->pos,
 		.width = output->width, .height = output->height,
 		.surface_committed = focus_surface_committed,
-		.get_label = focus_surface_get_label,
 		.surface_private = NULL,
 		.capture_input = false,
 	};
@@ -434,8 +430,11 @@ create_focus_surface(struct weston_compositor *ec,
 		return NULL;
 
 	curtain_params.surface_private = fsurf;
+	str_printf(&curtain_params.label, "focus highlight effect for output %s",
+		   output->name);
 
 	fsurf->curtain = weston_shell_utils_curtain_create(ec, &curtain_params);
+
 	weston_view_set_output(fsurf->curtain->view, output);
 
 	return fsurf;
@@ -758,21 +757,18 @@ surface_keyboard_focus_lost(struct weston_surface *surface)
 }
 
 static void
-touch_move_grab_down(struct weston_touch_grab *grab,
-		     const struct timespec *time,
-		     int touch_id, struct weston_coord_global c)
+touch_move_grab_down(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 }
 
 static void
-touch_move_grab_up(struct weston_touch_grab *grab, const struct timespec *time,
-		   int touch_id)
+touch_move_grab_up(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 	struct weston_touch_move_grab *move =
 		(struct weston_touch_move_grab *) container_of(
 			grab, struct shell_touch_grab, grab);
 
-	if (touch_id == 0)
+	if (event->touch_id == 0)
 		move->active = 0;
 
 	if (grab->touch->num_tp == 0) {
@@ -782,9 +778,7 @@ touch_move_grab_up(struct weston_touch_grab *grab, const struct timespec *time,
 }
 
 static void
-touch_move_grab_motion(struct weston_touch_grab *grab,
-		       const struct timespec *time, int touch_id,
-		       struct weston_coord_global unused)
+touch_move_grab_motion(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 	struct weston_touch_move_grab *move = (struct weston_touch_move_grab *) grab;
 	struct shell_surface *shsurf = move->base.shsurf;
@@ -855,8 +849,7 @@ noop_grab_focus(struct weston_pointer_grab *grab)
 
 static void
 noop_grab_axis(struct weston_pointer_grab *grab,
-	       const struct timespec *time,
-	       struct weston_pointer_axis_event *event)
+	       const struct weston_pointer_axis_event *event)
 {
 }
 
@@ -912,8 +905,7 @@ constrain_position(struct weston_move_grab *move)
 
 static void
 move_grab_motion(struct weston_pointer_grab *grab,
-		 const struct timespec *time,
-		 struct weston_pointer_motion_event *event)
+		 const struct weston_pointer_motion_event *event)
 {
 	struct weston_move_grab *move = (struct weston_move_grab *) grab;
 	struct weston_pointer *pointer = grab->pointer;
@@ -930,12 +922,12 @@ move_grab_motion(struct weston_pointer_grab *grab,
 
 static void
 move_grab_button(struct weston_pointer_grab *grab,
-		 const struct timespec *time, uint32_t button, uint32_t state_w)
+		 const struct weston_pointer_button_event *button_event)
 {
 	struct shell_grab *shell_grab = container_of(grab, struct shell_grab,
 						    grab);
 	struct weston_pointer *pointer = grab->pointer;
-	enum wl_pointer_button_state state = state_w;
+	enum wl_pointer_button_state state = button_event->button_state;
 
 	if (pointer->button_count == 0 &&
 	    state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -1142,8 +1134,7 @@ surface_tablet_tool_move(struct shell_surface *shsurf, struct weston_tablet_tool
 
 static void
 resize_grab_motion(struct weston_pointer_grab *grab,
-		   const struct timespec *time,
-		   struct weston_pointer_motion_event *event)
+		   const struct weston_pointer_motion_event *event)
 {
 	struct weston_resize_grab *resize = (struct weston_resize_grab *) grab;
 	struct weston_pointer *pointer = grab->pointer;
@@ -1201,12 +1192,11 @@ resize_grab_motion(struct weston_pointer_grab *grab,
 
 static void
 resize_grab_button(struct weston_pointer_grab *grab,
-		   const struct timespec *time,
-		   uint32_t button, uint32_t state_w)
+		   const struct weston_pointer_button_event *button_event)
 {
 	struct weston_resize_grab *resize = (struct weston_resize_grab *) grab;
 	struct weston_pointer *pointer = grab->pointer;
-	enum wl_pointer_button_state state = state_w;
+	enum wl_pointer_button_state state = button_event->button_state;
 
 	if (pointer->button_count == 0 &&
 	    state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -1312,27 +1302,27 @@ busy_cursor_grab_focus(struct weston_pointer_grab *base)
 
 static void
 busy_cursor_grab_motion(struct weston_pointer_grab *grab,
-			const struct timespec *time,
-			struct weston_pointer_motion_event *event)
+			const struct weston_pointer_motion_event *event)
 {
 	weston_pointer_move(grab->pointer, event);
 }
 
 static void
 busy_cursor_grab_button(struct weston_pointer_grab *base,
-			const struct timespec *time,
-			uint32_t button, uint32_t state)
+			const struct weston_pointer_button_event *button_event)
 {
 	struct shell_grab *grab = (struct shell_grab *) base;
 	struct shell_surface *shsurf = grab->shsurf;
 	struct weston_pointer *pointer = grab->grab.pointer;
 	struct weston_seat *seat = pointer->seat;
 
-	if (shsurf && button == BTN_LEFT && state) {
+	if (shsurf && button_event->button == BTN_LEFT &&
+	    button_event->button_state) {
 		activate(shsurf->shell, shsurf->view, seat,
 			 WESTON_ACTIVATE_FLAG_CONFIGURE);
 		surface_move(shsurf, pointer, false);
-	} else if (shsurf && button == BTN_RIGHT && state) {
+	} else if (shsurf && button_event->button == BTN_RIGHT &&
+		   button_event->button_state) {
 		activate(shsurf->shell, shsurf->view, seat,
 			 WESTON_ACTIVATE_FLAG_CONFIGURE);
 		surface_rotate(shsurf, pointer);
@@ -1655,34 +1645,6 @@ shell_surface_get_shell(struct shell_surface *shsurf)
 	return shsurf->shell;
 }
 
-static int
-black_surface_get_label(struct weston_surface *surface, char *buf, size_t len)
-{
-	struct weston_view *fs_view = surface->committed_private;
-	struct weston_surface *fs_surface = fs_view->surface;
-	int n;
-	int rem;
-	int ret;
-
-	n = snprintf(buf, len, "black background surface for ");
-	if (n < 0)
-		return n;
-
-	rem = (int)len - n;
-	if (rem < 0)
-		rem = 0;
-
-	if (fs_surface->get_label)
-		ret = fs_surface->get_label(fs_surface, buf + n, rem);
-	else
-		ret = snprintf(buf + n, rem, "<unknown>");
-
-	if (ret < 0)
-		return n;
-
-	return n + ret;
-}
-
 static void
 black_surface_committed(struct weston_surface *es,
 			struct weston_coord_surface new_origin)
@@ -1722,7 +1684,6 @@ shell_set_view_fullscreen(struct shell_surface *shsurf)
 		.pos = output->pos,
 		.width = output->width, .height = output->height,
 		.surface_committed = black_surface_committed,
-		.get_label = black_surface_get_label,
 		.surface_private = shsurf->view,
 		.capture_input = true,
 	};
@@ -1734,6 +1695,8 @@ shell_set_view_fullscreen(struct shell_surface *shsurf)
 	weston_shell_utils_center_on_output(shsurf->view, output);
 
 	if (!shsurf->fullscreen.black_view) {
+		str_printf(&curtain_params.label, "black background surface for %s",
+			   surface->label);
 		shsurf->fullscreen.black_view =
 			weston_shell_utils_curtain_create(ec, &curtain_params);
 	}
@@ -1919,6 +1882,18 @@ get_shell_surface(struct weston_surface *surface)
 	return NULL;
 }
 
+static void
+desktop_surface_update_label(struct wl_listener *listener, void *data)
+{
+	struct weston_desktop_surface *desktop_surface = data;
+	struct weston_surface *surface =
+		weston_desktop_surface_get_surface(desktop_surface);
+	char *label;
+
+	label = weston_desktop_surface_make_label(desktop_surface);
+	weston_surface_set_label(surface, label);
+}
+
 /*
  * libweston-desktop
  */
@@ -1935,6 +1910,7 @@ desktop_surface_added(struct weston_desktop_surface *desktop_surface,
 	struct shell_surface *shsurf;
 	struct weston_surface *surface =
 		weston_desktop_surface_get_surface(desktop_surface);
+	char *label;
 
 	view = weston_desktop_surface_create_view(desktop_surface);
 	if (!view)
@@ -1948,8 +1924,6 @@ desktop_surface_added(struct weston_desktop_surface *desktop_surface,
 			weston_log("no memory to allocate shell surface\n");
 		return;
 	}
-
-	weston_surface_set_label_func(surface, weston_shell_utils_surface_get_label);
 
 	shsurf->shell = (struct desktop_shell *) shell;
 	shsurf->unresponsive = 0;
@@ -1978,6 +1952,14 @@ desktop_surface_added(struct weston_desktop_surface *desktop_surface,
 	wl_list_insert(&shsurf->shell->shsurf_list, &shsurf->link);
 
 	weston_desktop_surface_set_user_data(desktop_surface, shsurf);
+
+	label = weston_desktop_surface_make_label(desktop_surface);
+	weston_surface_set_label(surface, label);
+
+	/* client-controllable from xdg-shell */
+	shsurf->surface_label_update.notify = desktop_surface_update_label;
+	weston_desktop_surface_add_metadata_listener(desktop_surface,
+						     &shsurf->surface_label_update);
 }
 
 static void
@@ -2010,7 +1992,9 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
 		shsurf->fullscreen.black_view = NULL;
 	}
 
-	weston_surface_set_label_func(surface, NULL);
+	wl_list_remove(&shsurf->surface_label_update.link);
+	wl_list_init(&shsurf->surface_label_update.link);
+
 	weston_desktop_surface_set_user_data(shsurf->desktop_surface, NULL);
 	shsurf->desktop_surface = NULL;
 
@@ -2623,12 +2607,6 @@ static const struct weston_desktop_api shell_desktop_api = {
 /* ************************ *
  * end of libweston-desktop *
  * ************************ */
-static int
-background_get_label(struct weston_surface *surface, char *buf, size_t len)
-{
-	return snprintf(buf, len, "background for output %s",
-			(surface->output ? surface->output->name : "NULL"));
-}
 
 static void
 background_committed(struct weston_surface *es,
@@ -2681,6 +2659,7 @@ desktop_shell_set_background(struct wl_client *client,
 		wl_resource_get_user_data(surface_resource);
 	struct shell_output *sh_output;
 	struct weston_head *head = weston_head_from_resource(output_resource);
+	char *label;
 
 	if (surface->committed) {
 		wl_resource_post_error(surface_resource,
@@ -2703,7 +2682,9 @@ desktop_shell_set_background(struct wl_client *client,
 
 	surface->committed = background_committed;
 	surface->committed_private = sh_output;
-	weston_surface_set_label_func(surface, background_get_label);
+
+	str_printf(&label, "background for output %s", surface->output->name);
+	weston_surface_set_label(surface, label);
 
 	weston_desktop_shell_send_configure(resource, 0,
 					    surface_resource,
@@ -2716,13 +2697,6 @@ desktop_shell_set_background(struct wl_client *client,
 				handle_background_surface_destroy;
 	wl_signal_add(&surface->destroy_signal,
 		      &sh_output->background_surface_listener);
-}
-
-static int
-panel_get_label(struct weston_surface *surface, char *buf, size_t len)
-{
-	return snprintf(buf, len, "panel for output %s",
-			(surface->output ? surface->output->name : "NULL"));
 }
 
 static void
@@ -2799,6 +2773,7 @@ desktop_shell_set_panel(struct wl_client *client,
 		wl_resource_get_user_data(surface_resource);
 	struct shell_output *sh_output;
 	struct weston_head *head = weston_head_from_resource(output_resource);
+	char *label;
 
 	if (surface->committed) {
 		wl_resource_post_error(surface_resource,
@@ -2822,7 +2797,9 @@ desktop_shell_set_panel(struct wl_client *client,
 
 	surface->committed = panel_committed;
 	surface->committed_private = sh_output;
-	weston_surface_set_label_func(surface, panel_get_label);
+
+	str_printf(&label, "panel for output %s", surface->output->name);
+	weston_surface_set_label(surface, label);
 
 	weston_desktop_shell_send_configure(resource, 0,
 					    surface_resource,
@@ -2833,12 +2810,6 @@ desktop_shell_set_panel(struct wl_client *client,
 
 	sh_output->panel_surface_listener.notify = handle_panel_surface_destroy;
 	wl_signal_add(&surface->destroy_signal, &sh_output->panel_surface_listener);
-}
-
-static int
-lock_surface_get_label(struct weston_surface *surface, char *buf, size_t len)
-{
-	return snprintf(buf, len, "lock window");
 }
 
 static void
@@ -2897,7 +2868,7 @@ desktop_shell_set_lock_surface(struct wl_client *client,
 
 	surface->committed = lock_surface_committed;
 	surface->committed_private = shell;
-	weston_surface_set_label_func(surface, lock_surface_get_label);
+	weston_surface_set_label_static(surface, "lock window");
 
 	shell->lock_surface = surface;
 	shell->lock_surface_listener.notify = handle_lock_surface_destroy;
@@ -3205,7 +3176,7 @@ resize_binding(struct weston_pointer *pointer, const struct timespec *time,
 static void
 surface_opacity_binding(struct weston_pointer *pointer,
 			const struct timespec *time,
-			struct weston_pointer_axis_event *event,
+			const struct weston_pointer_axis_event *event,
 			void *data)
 {
 	float step = 0.005;
@@ -3240,8 +3211,7 @@ terminate_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 
 static void
 rotate_grab_motion(struct weston_pointer_grab *grab,
-		   const struct timespec *time,
-		   struct weston_pointer_motion_event *event)
+		   const struct weston_pointer_motion_event *event)
 {
 	struct rotate_grab *rotate =
 		container_of(grab, struct rotate_grab, base.grab);
@@ -3307,14 +3277,13 @@ rotate_grab_motion(struct weston_pointer_grab *grab,
 
 static void
 rotate_grab_button(struct weston_pointer_grab *grab,
-		   const struct timespec *time,
-		   uint32_t button, uint32_t state_w)
+		   const struct weston_pointer_button_event *button_event)
 {
 	struct rotate_grab *rotate =
 		container_of(grab, struct rotate_grab, base.grab);
 	struct weston_pointer *pointer = grab->pointer;
 	struct shell_surface *shsurf = rotate->base.shsurf;
-	enum wl_pointer_button_state state = state_w;
+	enum wl_pointer_button_state state = button_event->button_state;
 
 	if (pointer->button_count == 0 &&
 	    state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -3694,13 +3663,6 @@ shell_fade_done(struct weston_view_animation *animation, void *data)
 	}
 }
 
-static int
-fade_surface_get_label(struct weston_surface *surface,
-		       char *buf, size_t len)
-{
-	return snprintf(buf, len, "desktop shell fade surface");
-}
-
 static struct weston_curtain *
 shell_fade_create_view(struct desktop_shell *shell)
 {
@@ -3709,9 +3671,9 @@ shell_fade_create_view(struct desktop_shell *shell)
 	struct weston_curtain_params curtain_params = {
 		.r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0,
 		.surface_committed = black_surface_committed,
-		.get_label = fade_surface_get_label,
 		.surface_private = shell,
 		.capture_input = true,
+		.label = xstrdup("desktop shell fade surface"),
 	};
 	struct weston_curtain *curtain;
 	bool first = true;
@@ -3738,6 +3700,7 @@ shell_fade_create_view(struct desktop_shell *shell)
 	curtain_params.pos.c.y = y1;
 	curtain_params.width = x2 - x1;
 	curtain_params.height = y2 - y1;
+
 	curtain = weston_shell_utils_curtain_create(compositor, &curtain_params);
 	assert(curtain);
 
@@ -3874,6 +3837,12 @@ wake_handler(struct wl_listener *listener, void *data)
 		container_of(listener, struct desktop_shell, wake_listener);
 
 	unlock(shell);
+}
+
+static void
+sleep_handler(struct wl_listener *listener, void *data)
+{
+	weston_log("entering sleep mode: DPMS off\n");
 }
 
 static void
@@ -4209,11 +4178,11 @@ switcher_destroy(struct switcher *switcher)
 }
 
 static void
-switcher_key(struct weston_keyboard_grab *grab,
-	     const struct timespec *time, uint32_t key, uint32_t state_w)
+switcher_key(struct weston_keyboard_grab *grab, const struct weston_key_event *key_event)
 {
 	struct switcher *switcher = container_of(grab, struct switcher, grab);
-	enum wl_keyboard_key_state state = state_w;
+	enum wl_keyboard_key_state state = key_event->key_state;
+	uint32_t key = key_event->key;
 
 	if (key == KEY_TAB && state == WL_KEYBOARD_KEY_STATE_PRESSED)
 		switcher_next(switcher);
@@ -4316,7 +4285,7 @@ force_kill_binding(struct weston_keyboard *keyboard,
 	if (!focus_surface)
 		return;
 
-	wl_signal_emit(&compositor->kill_signal, focus_surface);
+	wl_signal_emit_mutable(&compositor->kill_signal, focus_surface);
 
 	client = wl_resource_get_client(focus_surface->resource);
 	wl_client_get_credentials(client, &pid, NULL, NULL);
@@ -4647,6 +4616,7 @@ shell_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&shell->destroy_listener.link);
 	wl_list_remove(&shell->idle_listener.link);
 	wl_list_remove(&shell->wake_listener.link);
+	wl_list_remove(&shell->sleep_listener.link);
 	wl_list_remove(&shell->transform_listener.link);
 
 	text_backend_destroy(shell->text_backend);
@@ -4828,6 +4798,8 @@ wet_shell_init(struct weston_compositor *ec,
 	wl_signal_add(&ec->idle_signal, &shell->idle_listener);
 	shell->wake_listener.notify = wake_handler;
 	wl_signal_add(&ec->wake_signal, &shell->wake_listener);
+	shell->sleep_listener.notify = sleep_handler;
+	wl_signal_add(&ec->sleep_signal, &shell->sleep_listener);
 	shell->transform_listener.notify = transform_handler;
 	wl_signal_add(&ec->transform_signal, &shell->transform_listener);
 

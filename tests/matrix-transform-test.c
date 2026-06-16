@@ -49,7 +49,8 @@ transform_expect(struct weston_matrix *a, bool valid, enum wl_output_transform e
 		test_assert_true(wt == ewt);
 }
 
-TEST(transformation_matrix)
+static enum test_result_code
+transformation_matrix(struct wet_testsuite_data *suite_data)
 {
 	struct weston_matrix a, b;
 	int i;
@@ -63,21 +64,21 @@ TEST(transformation_matrix)
 	/* Make b a matrix that rotates a surface on the x,y plane by 90
 	 * degrees counter-clockwise */
 	weston_matrix_rotate_xy(&b, 0, -1);
-	test_assert_enum(b.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+	test_assert_enum_eq(b.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 	for (i = 0; i < 10; i++) {
 		weston_matrix_multiply(&a, &b);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_90);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_180);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_270);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_NORMAL);
 	}
 
@@ -87,38 +88,38 @@ TEST(transformation_matrix)
 	 * standard transform and a rotation that fails to match any
 	 * known rotations. */
 	weston_matrix_rotate_xy(&b, cos(-M_PI / 4.0), sin(-M_PI / 4.0));
-	test_assert_enum(b.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+	test_assert_enum_eq(b.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 	for (i = 0; i < 10; i++) {
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, false, 0);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_90);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, false, 0);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_180);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, false, 0);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_270);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, false, 0);
 
 		weston_matrix_multiply(&a, &b);
-		test_assert_enum(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
+		test_assert_enum_eq(a.type, WESTON_MATRIX_TRANSFORM_ROTATE);
 		transform_expect(&a, true, WL_OUTPUT_TRANSFORM_NORMAL);
 	}
 
@@ -345,7 +346,8 @@ surface_test_all_transforms(struct weston_surface *surf,
 	}
 }
 
-TEST(surface_matrix_to_standard_transform)
+static enum test_result_code
+surface_matrix_to_standard_transform(struct wet_testsuite_data *suite_data)
 {
 	struct weston_surface surf;
 	int scale;
@@ -452,7 +454,8 @@ output_test_all_transforms(struct weston_output *output,
 	}
 }
 
-TEST(output_matrix_to_standard_transform)
+static enum test_result_code
+output_matrix_to_standard_transform(struct wet_testsuite_data *suite_data)
 {
 	struct weston_output output;
 	int scale;
@@ -468,3 +471,9 @@ TEST(output_matrix_to_standard_transform)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(transformation_matrix),
+	TESTFN(surface_matrix_to_standard_transform),
+	TESTFN(output_matrix_to_standard_transform),
+);

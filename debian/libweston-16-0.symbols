@@ -1,5 +1,5 @@
-libweston-15.so.0 libweston-15-0 #MINVER#
-* Build-Depends-Package: libweston-15-dev
+libweston-16.so.0 libweston-16-0 #MINVER#
+* Build-Depends-Package: libweston-16-dev
  clear_pointer_focus@Base 12.0.0
  find_neighbors@Base 14.0.91
  linux_dmabuf_buffer_get@Base 12.0.0

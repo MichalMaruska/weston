@@ -82,7 +82,7 @@ Description: reference implementation of a wayland compositor
 Package: weston-dev
 Architecture: linux-any
 Depends: weston,
-         libweston-15-dev,
+         libweston-16-dev,
          ${misc:Depends},
          ${shlibs:Depends}
 Breaks: weston (<< 14.0.0-3)
@@ -111,7 +111,7 @@ Description: reference implementation of a wayland compositor (doc)
  .
  This package contains the Weston documentation.
 
-Package: libweston-15-0
+Package: libweston-16-0
 Architecture: linux-any
 Multi-Arch: same
 Section: libs
@@ -126,13 +126,13 @@ Description: reference implementation of a wayland compositor (shared libs)
  .
  This package includes the libweston shared libraries.
 
-Package: libweston-15-dev
+Package: libweston-16-dev
 Architecture: linux-any
 Multi-Arch: same
 Section: libdevel
 Depends: libpixman-1-dev,
          libwayland-dev,
-         libweston-15-0 (= ${binary:Version}),
+         libweston-16-0 (= ${binary:Version}),
          libxkbcommon-dev,
          ${misc:Depends},
          ${shlibs:Depends}

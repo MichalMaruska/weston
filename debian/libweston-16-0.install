@@ -1,0 +1,15 @@
+#! /usr/bin/dh-exec
+usr/lib/*/libweston-16.so.*
+usr/lib/*/libweston-16/color-lcms.so
+usr/lib/*/libweston-16/drm-backend.so
+usr/lib/*/libweston-16/gl-renderer.so
+usr/lib/*/libweston-16/headless-backend.so
+usr/lib/*/libweston-16/pipewire-backend.so
+usr/lib/*/libweston-16/pipewire-plugin.so
+usr/lib/*/libweston-16/rdp-backend.so
+usr/lib/*/libweston-16/remoting-plugin.so
+[!armhf] usr/lib/*/libweston-16/vulkan-renderer.so
+[!sparc64] usr/lib/*/libweston-16/vnc-backend.so
+usr/lib/*/libweston-16/wayland-backend.so
+usr/lib/*/libweston-16/x11-backend.so
+usr/lib/*/libweston-16/xwayland.so

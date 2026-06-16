@@ -18,7 +18,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  notify_keyboard_focus_out@Base 12.0.0
  notify_modifiers@Base 12.0.0
  notify_motion@Base 12.0.0
- notify_motion_absolute@Base 12.0.0
+#MISSING: 15.0.91# notify_motion_absolute@Base 12.0.0
  notify_pointer_focus@Base 12.0.0
  notify_pointer_frame@Base 12.0.0
  notify_tablet_added@Base 12.0.0
@@ -75,18 +75,27 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_capture_task_get_buffer@Base 12.0.0
  weston_capture_task_retire_complete@Base 12.0.0
  weston_capture_task_retire_failed@Base 12.0.0
+ weston_client_get_internal_id@Base 15.0.91
+ weston_client_get_internal_name@Base 15.0.91
+ weston_client_new_internal_id@Base 15.0.91
+ weston_client_set_internal_name@Base 15.0.91
  weston_cm_send_icc_file@Base 14.0.0
  weston_cm_send_luminances@Base 14.0.91
+ weston_cm_send_parametric_info@Base 15.0.91
  weston_cm_send_primaries@Base 14.0.0
  weston_cm_send_primaries_named@Base 14.0.0
  weston_cm_send_target_luminances@Base 14.0.91
  weston_cm_send_target_primaries@Base 14.0.91
- weston_cm_send_tf_named@Base 14.0.0
+ weston_cm_send_tf@Base 15.0.91
+#MISSING: 15.0.91# weston_cm_send_tf_named@Base 14.0.0
+ weston_color_curve_create_inverse@Base 15.0.91
  weston_color_curve_enum_get_parametric@Base 14.0.91
+ weston_color_curve_sample@Base 15.0.91
  weston_color_curve_to_3x1D_LUT@Base 14.0.91
  weston_color_feature_info_from@Base 14.0.0
  weston_color_format_mask_to_str@Base 14.0.91
  weston_color_format_to_str@Base 14.0.91
+ weston_color_gamut_from_protocol@Base 15.0.91
  weston_color_matrix_coef_info_get@Base 14.0.91
  weston_color_primaries_info_from@Base 14.0.0
  weston_color_primaries_info_from_protocol@Base 14.0.91
@@ -115,6 +124,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_color_tf_info_from@Base 14.0.0
  weston_color_tf_info_from_parametric_curve@Base 14.0.91
  weston_color_tf_info_from_protocol@Base 14.0.91
+ weston_color_transform_as_single_curve@Base 15.0.91
  weston_color_transform_details_string@Base 14.0.91
  weston_color_transform_init@Base 12.0.0
  weston_color_transform_ref@Base 12.0.0
@@ -150,10 +160,13 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_compositor_enable_touch_calibrator@Base 12.0.0
  weston_compositor_exit@Base 12.0.0
  weston_compositor_exit_with_code@Base 12.0.0
+ weston_compositor_find_output_by_head_serial@Base 15.0.91
  weston_compositor_find_output_by_name@Base 12.0.0
  weston_compositor_flush_heads_changed@Base 12.0.0
+ weston_compositor_get_client@Base 15.0.91
  weston_compositor_get_test_data@Base 12.0.0
  weston_compositor_get_time@Base 12.0.0
+ weston_compositor_get_touch_devices@Base 15.0.91
  weston_compositor_get_user_data@Base 12.0.0
  weston_compositor_import_dmabuf@Base 12.0.0
  weston_compositor_init_renderer@Base 12.0.0
@@ -171,7 +184,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_compositor_set_default_pointer_grab@Base 12.0.0
  weston_compositor_set_xkb_rule_names@Base 12.0.0
  weston_compositor_sleep@Base 12.0.0
- weston_compositor_stack_plane@Base 12.0.0
+#MISSING: 15.0.91# weston_compositor_stack_plane@Base 12.0.0
  weston_compositor_wake@Base 12.0.0
  weston_config_destroy@Base 12.0.0
  weston_config_get_binding_modifier@Base 12.0.0
@@ -190,6 +203,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_coord_global_clamp_for_output@Base 13.0.0
  weston_coord_global_from_output_point@Base 12.0.0
  weston_coord_global_to_surface@Base 12.0.0
+ weston_coord_global_to_surface_for_paint_node@Base 15.0.91
  weston_coord_surface_to_buffer@Base 12.0.0
  weston_coord_surface_to_global@Base 12.0.0
  weston_desktop_client_for_each_surface@Base 12.0.0
@@ -219,6 +233,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_desktop_surface_get_surface@Base 12.0.0
  weston_desktop_surface_get_title@Base 12.0.0
  weston_desktop_surface_get_user_data@Base 12.0.0
+ weston_desktop_surface_make_label@Base 15.0.91
  weston_desktop_surface_propagate_layer@Base 12.0.0
  weston_desktop_surface_set_activated@Base 12.0.0
  weston_desktop_surface_set_fullscreen@Base 12.0.0
@@ -265,6 +280,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_head_get_display_info@Base 14.0.0
  weston_head_get_name@Base 12.0.0
  weston_head_get_output@Base 12.0.0
+ weston_head_get_serial_number@Base 15.0.91
  weston_head_get_transform@Base 12.0.0
  weston_head_init@Base 12.0.0
  weston_head_is_connected@Base 12.0.0
@@ -281,8 +297,10 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_head_set_non_desktop@Base 12.0.0
  weston_head_set_physical_size@Base 12.0.0
  weston_head_set_subpixel@Base 12.0.0
+ weston_head_set_supported_color_format_mask@Base 15.0.91
  weston_head_set_supported_colorimetry_mask@Base 14.0.0
  weston_head_set_supported_eotf_mask@Base 12.0.0
+ weston_head_set_supported_underscan@Base 15.0.91
  weston_head_set_supported_vrr_modes_mask@Base 14.0.91
  weston_head_set_transform@Base 12.0.0
  weston_idalloc_create@Base 14.0.0
@@ -291,6 +309,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_idalloc_put_id@Base 14.0.0
  weston_install_debug_key_binding@Base 12.0.0
  weston_inverse_evaluate_lut1d@Base 14.0.91
+ weston_key_event_init@Base 15.0.91
  weston_keyboard_end_grab@Base 12.0.0
  weston_keyboard_has_focus_resource@Base 12.0.0
  weston_keyboard_send_key@Base 12.0.0
@@ -321,6 +340,8 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_log_scope_get_name@Base 13.0.0
  weston_log_scope_is_enabled@Base 12.0.0
  weston_log_scope_printf@Base 12.0.0
+ weston_log_scope_puts@Base 15.0.91
+ weston_log_scope_stream@Base 15.0.91
  weston_log_scope_timestamp@Base 12.0.0
  weston_log_scope_to_be_advertised@Base 14.0.91
  weston_log_scope_vprintf@Base 12.0.0
@@ -335,6 +356,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_log_subscription_complete@Base 12.0.0
  weston_log_subscription_iterate@Base 12.0.0
  weston_log_subscription_printf@Base 12.0.0
+ weston_log_subscription_write@Base 15.0.91
  weston_log_timestamp@Base 12.0.0
  weston_m3f_invert@Base 14.0.91
  weston_m4f_invert@Base 14.0.91
@@ -360,6 +382,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_output_arm_frame_timer@Base 13.0.0
  weston_output_attach_head@Base 12.0.0
  weston_output_color_effect_cvd_correction@Base 14.0.91
+ weston_output_color_effect_grayscale@Base 15.0.91
  weston_output_color_effect_inversion@Base 14.0.91
  weston_output_color_outcome_destroy@Base 12.0.0
  weston_output_contains_coord@Base 13.0.0
@@ -374,7 +397,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_output_finish_frame_from_timer@Base 13.0.0
  weston_output_flush_damage_for_plane@Base 13.0.0
  weston_output_flush_damage_for_primary_plane@Base 13.0.1
- weston_output_get_color_characteristics@Base 12.0.0
+#MISSING: 15.0.91# weston_output_get_color_characteristics@Base 12.0.0
  weston_output_get_colorimetry_mode@Base 14.0.0
  weston_output_get_destroy_listener@Base 12.0.0
  weston_output_get_eotf_mode@Base 12.0.0
@@ -384,6 +407,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_output_get_supported_color_formats@Base 14.0.91
  weston_output_get_supported_colorimetry_modes@Base 14.0.0
  weston_output_get_supported_eotf_modes@Base 12.0.0
+ weston_output_get_supported_underscan@Base 15.0.91
  weston_output_get_supported_vrr_modes@Base 14.0.91
  weston_output_get_writeback_formats@Base 14.0.91
  weston_output_has_renderer_capture_tasks@Base 12.0.0
@@ -401,7 +425,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_output_schedule_repaint@Base 12.0.0
  weston_output_schedule_repaint_reset@Base 14.0.0
  weston_output_schedule_repaint_restart@Base 14.0.0
- weston_output_set_color_characteristics@Base 12.0.0
+#MISSING: 15.0.91# weston_output_set_color_characteristics@Base 12.0.0
  weston_output_set_color_format@Base 14.0.91
  weston_output_set_color_outcome@Base 12.0.0
  weston_output_set_color_profile@Base 12.0.0
@@ -413,10 +437,12 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_output_set_shell_private@Base 14.0.91
  weston_output_set_single_mode@Base 13.0.0
  weston_output_set_transform@Base 12.0.0
+ weston_output_set_underscan@Base 15.0.91
  weston_output_set_vrr_mode@Base 14.0.91
  weston_output_update_capture_info@Base 12.0.0
  weston_output_update_matrix@Base 12.0.0
  weston_paint_node_get_opaque_region@Base 14.0.97
+ weston_paint_node_has_valid_buffer@Base 15.0.91
  weston_paint_node_move_to_plane@Base 13.0.0
  weston_parse_transform@Base 14.0.91
  weston_plane_failure_reasons_to_str@Base 14.0.91
@@ -424,12 +450,16 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_plane_release@Base 12.0.0
  weston_plugin_api_get@Base 12.0.0
  weston_plugin_api_register@Base 12.0.0
+ weston_pointer_axis_event_init@Base 15.0.91
+ weston_pointer_button_event_init@Base 15.0.91
  weston_pointer_clamp@Base 12.0.0
  weston_pointer_clear_focus@Base 12.0.0
  weston_pointer_end_grab@Base 12.0.0
  weston_pointer_has_focus_resource@Base 12.0.0
+ weston_pointer_motion_event_init@Base 15.0.91
  weston_pointer_motion_to_abs@Base 12.0.0
  weston_pointer_move@Base 12.0.0
+ weston_pointer_move_to@Base 15.0.91
  weston_pointer_send_axis@Base 12.0.0
  weston_pointer_send_axis_source@Base 12.0.0
  weston_pointer_send_button@Base 12.0.0
@@ -439,14 +469,14 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_pointer_start_drag@Base 12.0.0
  weston_pointer_start_grab@Base 12.0.0
  weston_primary_flight_recorder_ring_buffer@Base 12.0.0
- weston_recorder_start@Base 12.0.0
- weston_recorder_stop@Base 12.0.0
+#MISSING: 15.0.91# weston_recorder_start@Base 12.0.0
+#MISSING: 15.0.91# weston_recorder_stop@Base 12.0.0
  weston_region_global_to_output@Base 12.0.0
  weston_render_intent_info_from@Base 14.0.0
  weston_render_intent_info_from_protocol@Base 14.0.0
  weston_renderer_resize_output@Base 12.0.0
  weston_reset_color_representation@Base 14.0.91
- weston_screenshooter_shoot@Base 12.0.0
+#MISSING: 15.0.91# weston_screenshooter_shoot@Base 12.0.0
  weston_seat_add_tablet@Base 12.0.0
  weston_seat_add_tablet_tool@Base 12.0.0
  weston_seat_break_desktop_grabs@Base 12.0.0
@@ -474,7 +504,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_shell_utils_get_default_output@Base 12.0.0
  weston_shell_utils_get_focused_output@Base 12.0.0
  weston_shell_utils_subsurfaces_boundingbox@Base 12.0.0
- weston_shell_utils_surface_get_label@Base 12.0.0
+#MISSING: 15.0.91# weston_shell_utils_surface_get_label@Base 12.0.0
  weston_shell_utils_view_get_layer_position@Base 13.0.0
  weston_slide_run@Base 12.0.0
  weston_spring_done@Base 12.0.0
@@ -497,7 +527,9 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_surface_is_unmapping@Base 12.0.0
  weston_surface_map@Base 12.0.0
  weston_surface_ref@Base 12.0.0
- weston_surface_set_label_func@Base 12.0.0
+ weston_surface_set_label@Base 15.0.91
+#MISSING: 15.0.91# weston_surface_set_label_func@Base 12.0.0
+ weston_surface_set_label_static@Base 15.0.91
  weston_surface_set_role@Base 12.0.0
  weston_surface_set_size@Base 12.0.0
  weston_surface_to_buffer_rect@Base 12.0.0
@@ -526,9 +558,12 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_timeline_profiling@Base 14.0.91
  weston_timeline_refresh_subscription_objects@Base 12.0.0
  weston_touch_create_touch_device@Base 12.0.0
+ weston_touch_device_bind_output@Base 15.0.91
  weston_touch_device_can_calibrate@Base 12.0.0
  weston_touch_device_destroy@Base 12.0.0
+ weston_touch_device_list_release@Base 15.0.91
  weston_touch_end_grab@Base 12.0.0
+ weston_touch_event_init@Base 15.0.91
  weston_touch_has_focus_resource@Base 12.0.0
  weston_touch_send_down@Base 12.0.0
  weston_touch_send_frame@Base 12.0.0
@@ -549,7 +584,7 @@ libweston-16.so.0 libweston-16-0 #MINVER#
  weston_view_geometry_dirty@Base 12.0.0
  weston_view_get_pos_offset_global@Base 13.0.0
  weston_view_get_pos_offset_rel@Base 13.0.0
- weston_view_has_valid_buffer@Base 12.0.0
+#MISSING: 15.0.91# weston_view_has_valid_buffer@Base 12.0.0
  weston_view_is_mapped@Base 12.0.0
  weston_view_is_opaque@Base 12.0.0
  weston_view_move_before_layer_entry@Base 14.0.91

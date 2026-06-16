@@ -1,8 +1,11 @@
 weston (15.0.91-1) UNRELEASED; urgency=medium
 
-  * New upstream release
+  * New upstream release (alpha release for 16.0.0)
+  * Adjust VCS fields in d/control and d/gbp.conf for experimental
+  * Drop backend-vnc-Update-to-Neat-VNC-1.0.0-aml-1.0.0.patch, merged upstream
+  * Bump SONAME to libweston-16-0
 
- -- Dylan Aïssi <daissi@debian.org>  Tue, 16 Jun 2026 17:37:26 +0200
+ -- Dylan Aïssi <daissi@debian.org>  Tue, 16 Jun 2026 17:51:31 +0200
 
 weston (15.0.1-2) experimental; urgency=medium
 

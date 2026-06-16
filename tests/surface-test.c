@@ -44,7 +44,9 @@ fixture_setup(struct weston_test_harness *harness)
 }
 DECLARE_FIXTURE_SETUP(fixture_setup);
 
-PLUGIN_TEST(surface_transform)
+static enum test_result_code
+surface_transform(struct wet_testsuite_data *suite_data,
+		  struct weston_compositor *compositor)
 {
 	/* struct weston_compositor *compositor; */
 	struct weston_surface *surface;
@@ -52,7 +54,7 @@ PLUGIN_TEST(surface_transform)
 	struct weston_coord_surface coord_s;
 	struct weston_coord_global coord_g;
 
-	surface = weston_surface_create(compositor);
+	surface = weston_surface_create(compositor, NULL);
 	test_assert_ptr_not_null(surface);
 	view = weston_view_create(surface);
 	test_assert_ptr_not_null(view);
@@ -81,3 +83,7 @@ PLUGIN_TEST(surface_transform)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN_PLUGIN(surface_transform),
+);

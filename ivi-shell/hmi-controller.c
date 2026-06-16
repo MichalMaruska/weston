@@ -1639,10 +1639,9 @@ pointer_noop_grab_focus(struct weston_pointer_grab *grab)
 
 static void
 pointer_default_grab_axis(struct weston_pointer_grab *grab,
-			  const struct timespec *time,
-			  struct weston_pointer_axis_event *event)
+			  const struct weston_pointer_axis_event *event)
 {
-	weston_pointer_send_axis(grab->pointer, time, event);
+	weston_pointer_send_axis(grab->pointer, event);
 }
 
 static void
@@ -1713,8 +1712,7 @@ layer_set_pos(struct hmi_controller *hmi_ctrl, struct ivi_layout_layer *layer,
 
 static void
 pointer_move_grab_motion(struct weston_pointer_grab *grab,
-			 const struct timespec *time,
-			 struct weston_pointer_motion_event *event)
+			 const struct weston_pointer_motion_event *event)
 {
 	struct pointer_move_grab *pnt_move_grab =
 		(struct pointer_move_grab *)grab;
@@ -1733,9 +1731,7 @@ pointer_move_grab_motion(struct weston_pointer_grab *grab,
 }
 
 static void
-touch_move_grab_motion(struct weston_touch_grab *grab,
-		       const struct timespec *time, int touch_id,
-		       struct weston_coord_global c)
+touch_move_grab_motion(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 	struct touch_move_grab *tch_move_grab = (struct touch_move_grab *)grab;
 	struct hmi_controller *hmi_ctrl =
@@ -1756,11 +1752,10 @@ touch_move_grab_motion(struct weston_touch_grab *grab,
 
 static void
 pointer_move_workspace_grab_button(struct weston_pointer_grab *grab,
-				   const struct timespec *time, uint32_t button,
-				   uint32_t state_w)
+				   const struct weston_pointer_button_event *button_event)
 {
-	if (BTN_LEFT == button &&
-	    WL_POINTER_BUTTON_STATE_RELEASED == state_w) {
+	if (BTN_LEFT == button_event->button &&
+	    WL_POINTER_BUTTON_STATE_RELEASED == button_event->button_state) {
 		struct pointer_grab *pg = (struct pointer_grab *)grab;
 
 		pointer_move_workspace_grab_end(pg);
@@ -1769,20 +1764,16 @@ pointer_move_workspace_grab_button(struct weston_pointer_grab *grab,
 }
 
 static void
-touch_nope_grab_down(struct weston_touch_grab *grab,
-		     const struct timespec *time,
-		     int touch_id, struct weston_coord_global c)
+touch_nope_grab_down(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 }
 
 static void
-touch_move_workspace_grab_up(struct weston_touch_grab *grab,
-			     const struct timespec *time,
-			     int touch_id)
+touch_move_workspace_grab_up(struct weston_touch_grab *grab, const struct weston_touch_event *event)
 {
 	struct touch_move_grab *tch_move_grab = (struct touch_move_grab *)grab;
 
-	if (0 == touch_id)
+	if (0 == event->touch_id)
 		tch_move_grab->is_active = 0;
 
 	if (0 == grab->touch->num_tp) {

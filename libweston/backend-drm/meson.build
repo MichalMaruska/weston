@@ -32,6 +32,10 @@ srcs_drm = [
 	presentation_time_server_protocol_h,
 ]
 
+if (libdrm_supports_color_pipeline)
+       srcs_drm += 'colorops.c'
+endif
+
 deps_drm = [
 	dep_egl, # optional
 	dep_vulkan, # optional
@@ -65,22 +69,7 @@ if get_option('renderer-vulkan')
 	config_h.set('BUILD_DRM_GBM', '1')
 endif
 
-if get_option('deprecated-backend-drm-screencast-vaapi')
-        warning('deprecated-backend-drm-screencast-vaapi enabled. This option will be removed in future versions.')
-	foreach name : [ 'libva', 'libva-drm' ]
-		d = dependency(name, version: '>= 0.34.0', required: false)
-		if not d.found()
-			error('VA-API recorder requires @0@ >= 0.34.0 which was not found. Or, you can use \'-Dbackend-drm-screencast-vaapi=false\'.'.format(name))
-		endif
-		deps_drm += d
-	endforeach
-
-	srcs_drm += 'vaapi-recorder.c'
-	deps_drm += dependency('threads')
-	config_h.set('BUILD_VAAPI_RECORDER', '1')
-endif
-
-if get_option('remoting') or get_option('pipewire')
+if get_option('deprecated-remoting') or get_option('deprecated-pipewire')
 	if not get_option('renderer-gl')
 		error('DRM virtual requires renderer-gl.')
 	endif

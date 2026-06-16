@@ -116,6 +116,7 @@ struct shell_surface {
 	struct shell_output *fullscreen_output;
 	struct shell_output *output;
 	struct wl_listener output_destroy_listener;
+	struct wl_listener surface_label_update;
 
 	struct surface_state {
 		bool fullscreen;
@@ -250,6 +251,7 @@ struct desktop_shell {
 
 	struct wl_listener idle_listener;
 	struct wl_listener wake_listener;
+	struct wl_listener sleep_listener;
 	struct wl_listener transform_listener;
 	struct wl_listener resized_listener;
 	struct wl_listener destroy_listener;

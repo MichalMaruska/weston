@@ -139,7 +139,7 @@ drm_mode_ensure_blob(struct drm_device *device, struct drm_mode *mode)
 	if (mode->blob_id)
 		return 0;
 
-	ret = drmModeCreatePropertyBlob(device->drm.fd,
+	ret = drmModeCreatePropertyBlob(device->kms_device->fd,
 					&mode->mode_info,
 					sizeof(mode->mode_info),
 					&mode->blob_id);
@@ -428,7 +428,7 @@ drm_head_maybe_update_display_data(struct drm_head *head,
 			&head->connector.props[WDRM_CONNECTOR_EDID],
 			props, 0);
 	if (blob_id)
-		edid_blob = drmModeGetPropertyBlob(device->drm.fd, blob_id);
+		edid_blob = drmModeGetPropertyBlob(device->kms_device->fd, blob_id);
 
 	if (edid_blob && edid_blob->length > 0) {
 		if (!head->display_data ||
@@ -488,6 +488,110 @@ drm_head_get_kms_colorimetry_modes(const struct drm_head *head)
 	}
 
 	return colorimetry_modes;
+}
+
+static bool
+drm_head_get_margin_caps(const struct drm_head *head,
+			 uint32_t *hborder_max,
+			 uint32_t *vborder_max)
+{
+	const struct drm_property_info *info;
+	uint32_t border = 0;
+
+	info = &head->connector.props[WDRM_CONNECTOR_LEFT_MARGIN];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		goto no_margins;
+	border = info->range_values[1];
+
+	info = &head->connector.props[WDRM_CONNECTOR_RIGHT_MARGIN];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		goto no_margins;
+	*hborder_max = MIN(border, info->range_values[1]);
+
+	info = &head->connector.props[WDRM_CONNECTOR_TOP_MARGIN];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		goto no_margins;
+	border = info->range_values[1];
+
+	info = &head->connector.props[WDRM_CONNECTOR_BOTTOM_MARGIN];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		goto no_margins;
+	*vborder_max = MIN(border, info->range_values[1]);
+
+	return true;
+
+no_margins:
+	*hborder_max = 0;
+	*vborder_max = 0;
+	return false;
+}
+
+static void
+drm_head_get_underscan_caps(const struct drm_head *head,
+			    uint32_t *hborder_max_out,
+			    uint32_t *vborder_max_out)
+{
+	const struct drm_property_info *info;
+	uint32_t hborder_max;
+
+	*hborder_max_out = 0;
+	*vborder_max_out = 0;
+	info = &head->connector.props[WDRM_CONNECTOR_UNDERSCAN];
+	if (info->prop_id == 0)
+		return;
+
+	info = &head->connector.props[WDRM_CONNECTOR_UNDERSCAN_HBORDER];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		return;
+	hborder_max = info->range_values[1];
+
+	info = &head->connector.props[WDRM_CONNECTOR_UNDERSCAN_VBORDER];
+	if (info->prop_id == 0 || info->num_range_values != 2)
+		return;
+	*vborder_max_out = info->range_values[1];
+
+	*hborder_max_out = hborder_max;
+}
+
+static enum weston_color_format
+color_format_from_wdrm_color_format(enum wdrm_color_format format)
+{
+	switch (format) {
+	case WDRM_COLOR_FORMAT_AUTO:
+		return WESTON_COLOR_FORMAT_AUTO;
+	case WDRM_COLOR_FORMAT_RGB:
+		return WESTON_COLOR_FORMAT_RGB;
+	case WDRM_COLOR_FORMAT_YUV444:
+		return WESTON_COLOR_FORMAT_YUV444;
+	case WDRM_COLOR_FORMAT_YUV422:
+		return WESTON_COLOR_FORMAT_YUV422;
+	case WDRM_COLOR_FORMAT_YUV420:
+		return WESTON_COLOR_FORMAT_YUV420;
+	default:
+		return WESTON_COLOR_FORMAT_AUTO;
+	}
+}
+
+static uint32_t
+drm_head_get_kms_color_formats(const struct drm_head *head)
+{
+	const struct drm_property_info *info;
+	uint32_t color_formats = WESTON_COLOR_FORMAT_AUTO;
+	unsigned i;
+
+	/* Cannot bother implementing without atomic */
+	if (!head->connector.device->atomic_modeset)
+		return color_formats;
+
+	info = &head->connector.props[WDRM_CONNECTOR_COLOR_FORMAT];
+	if (info->prop_id == 0)
+		return color_formats;
+
+	for (i = 0; i < WDRM_COLOR_FORMAT__COUNT; i++)
+		if (info->enum_values[i].valid)
+			color_formats |= color_format_from_wdrm_color_format(i);
+
+	return color_formats;
 }
 
 static uint32_t
@@ -553,7 +657,7 @@ static void
 drm_output_destroy_mode(struct drm_device *device, struct drm_mode *mode)
 {
 	if (mode->blob_id)
-		drmModeDestroyPropertyBlob(device->drm.fd, mode->blob_id);
+		drmModeDestroyPropertyBlob(device->kms_device->fd, mode->blob_id);
 	wl_list_remove(&mode->base.link);
 	free(mode);
 }
@@ -661,6 +765,7 @@ update_head_from_connector(struct drm_head *head)
 	drmModeConnector *conn = connector->conn;
 	int vrr_capable;
 	uint32_t vrr_mode_mask = 0;
+	uint32_t hborder_max, vborder_max;
 	uint32_t conn_id = head->connector.connector_id;
 	bool ret;
 
@@ -720,6 +825,13 @@ update_head_from_connector(struct drm_head *head)
 	if (vrr_capable)
 		vrr_mode_mask = WESTON_VRR_MODE_GAME;
 	weston_head_set_supported_vrr_modes_mask(&head->base, vrr_mode_mask);
+
+	if (!drm_head_get_margin_caps(head, &hborder_max, &vborder_max))
+		drm_head_get_underscan_caps(head, &hborder_max, &vborder_max);
+	weston_head_set_supported_underscan(&head->base, hborder_max, vborder_max);
+
+	dhi.color_format_mask &= drm_head_get_kms_color_formats(head);
+	weston_head_set_supported_color_format_mask(&head->base, dhi.color_format_mask);
 
 	drm_head_info_fini(&dhi);
 }

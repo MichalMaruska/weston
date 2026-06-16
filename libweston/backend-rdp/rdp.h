@@ -99,7 +99,10 @@ struct rdp_backend {
 	char *server_cert;
 	char *server_key;
 	char *rdp_key;
+	bool vmconnect;
 	int tls_enabled;
+	char *nla_ntlm_db;
+	int nla_enabled;
 	int resizeable;
 	int force_no_compression;
 	bool remotefx_codec;

@@ -39,6 +39,34 @@
 extern "C" {
 #endif
 
+enum weston_debug_annotation_type {
+	WESTON_DEBUG_ANNOTATION_INT_VAL,
+	WESTON_DEBUG_ANNOTATION_FLOAT_VAL,
+	WESTON_DEBUG_ANNOTATION_DOUBLE_VAL,
+	WESTON_DEBUG_ANNOTATION_STR_VAL,
+	WESTON_DEBUG_ANNOTATION_CONTAINER,
+	WESTON_DEBUG_ANNOTATION_FLOW,
+};
+
+struct weston_debug_annotation {
+	const char *key;
+	union {
+		uint64_t flow_value;
+		int ivalue;
+		float fvalue;
+		double dvalue;
+		const char *svalue;
+	};
+	unsigned char type;
+	unsigned char parent;
+	unsigned char key_size;
+};
+
+struct weston_debug_annotations {
+	struct weston_debug_annotation *annots;
+	unsigned char count;
+};
+
 #ifdef HAVE_PERFETTO
 
 extern int util_perfetto_tracing_state;
@@ -62,6 +90,15 @@ void util_perfetto_counter_set(const char *name, double value);
 void util_perfetto_trace_full_begin(const char *name, uint64_t track_id, uint64_t id, clockid_t clock, uint64_t timestamp);
 
 void util_perfetto_trace_full_end(const char *name, uint64_t track_id, clockid_t clock, uint64_t timestamp);
+
+void util_perfetto_trace_commit_debug_annots(const char *name,
+		struct weston_debug_annotations *annots);
+
+void util_perfetto_trace_commit_annotate_func(const char *name,
+		struct weston_debug_annotations *annots);
+
+void util_perfetto_trace_instant_timestamp(const char *name, uint64_t track_id,
+		uint64_t id, clockid_t clock, uint64_t ts);
 
 uint64_t util_perfetto_next_id(void);
 
@@ -101,6 +138,30 @@ util_perfetto_trace_full_begin(const char *name, uint64_t track_id, uint64_t id,
 
 static inline void
 util_perfetto_trace_full_end(const char *name, uint64_t track_id, clockid_t clock, uint64_t timestamp)
+{
+}
+
+static inline void
+util_perfetto_trace_commit_debug_annots(uint64_t id, const char *name,
+					struct weston_debug_annotations *annots)
+{
+}
+
+static inline void
+util_perfetto_trace_commit_annotate_func(const char *name,
+					 struct weston_debug_annotations *annots)
+{
+}
+
+static inline void
+util_perfetto_trace_commit_annotate_func_flow(uint64_t id, const char *name,
+					      struct weston_debug_annotations *annots)
+{
+}
+
+static inline void
+util_perfetto_trace_instant_timestamp(const char *name, uint64_t track_id,
+				      clockid_t clock, uint64_t ts)
 {
 }
 

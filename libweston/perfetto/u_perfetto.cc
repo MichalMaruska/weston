@@ -145,10 +145,145 @@ util_perfetto_counter_set(const char *name, double value)
 		      perfetto::DynamicString(name), value);
 }
 
+void
+util_perfetto_trace_instant_timestamp(const char *name, uint64_t track_id, uint64_t id, clockid_t clock, uint64_t ts)
+{
+	if (id) {
+		TRACE_EVENT_INSTANT(UTIL_PERFETTO_CATEGORY_DEFAULT_STR,
+				    nullptr,
+				    perfetto::Track(track_id),
+				    perfetto::TraceTimestamp{clockid_to_perfetto_clock(clock), ts},
+				    perfetto::Flow::ProcessScoped(id),
+				    [&](perfetto::EventContext ctx) {
+					ctx.event()->set_name(name);
+					ctx.AddDebugAnnotation(name, ts);
+		});
+		return;
+	}
+
+	TRACE_EVENT_INSTANT(UTIL_PERFETTO_CATEGORY_DEFAULT_STR,
+			    nullptr,
+			    perfetto::Track(track_id),
+			    perfetto::TraceTimestamp{clockid_to_perfetto_clock(clock), ts},
+			    [&](perfetto::EventContext ctx) {
+				ctx.event()->set_name(name);
+				ctx.AddDebugAnnotation(name, ts);
+	});
+}
+
 uint64_t
 util_perfetto_next_id(void)
 {
 	return p_atomic_inc_return(&util_perfetto_unique_id);
+}
+
+static char *
+build_key(char *space, size_t size, struct weston_debug_annotations *annots, unsigned char idx)
+{
+	struct weston_debug_annotation *annot = &annots->annots[idx];
+	char *cur = space + size;
+
+	cur -= annot->key_size;
+	memcpy(cur, annot->key, annot->key_size);
+
+	do {
+		annot = &annots->annots[annot->parent];
+
+		if (space + 2 + annot->key_size - 1 >= cur)
+			return NULL;
+
+		*(--cur) = ':';
+		*(--cur) = ':';
+		cur -= annot->key_size - 1;
+		memcpy(cur, annot->key, annot->key_size - 1);
+	} while (annot != &annots->annots[annot->parent]);
+
+	return cur;
+}
+
+static void
+util_perfetto_flush_debug_annotation(perfetto::EventContext *ctx,
+				     struct weston_debug_annotations *annots)
+{
+	struct weston_debug_annotation *annot;
+
+	if (annots->count == 0)
+		return;
+
+	for (unsigned char idx = 0; idx < annots->count; idx++) {
+		annot = &annots->annots[idx];
+		const char *key = annot->key;
+		char keyspace[400];
+		bool use_built_key;
+
+		if (annot->type == WESTON_DEBUG_ANNOTATION_CONTAINER)
+			continue;
+
+		use_built_key = false;
+		if (annot->parent != idx) {
+			key = build_key(keyspace, sizeof(keyspace), annots, idx);
+			if (!key)
+				continue;
+
+			use_built_key = true;
+		}
+
+		switch (annot->type) {
+		case WESTON_DEBUG_ANNOTATION_INT_VAL:
+			if (use_built_key)
+				ctx->AddDebugAnnotation(perfetto::DynamicString(key), annot->ivalue);
+			else
+				ctx->AddDebugAnnotation(key, annot->ivalue);
+			break;
+		case WESTON_DEBUG_ANNOTATION_FLOAT_VAL:
+			if (use_built_key)
+				ctx->AddDebugAnnotation(perfetto::DynamicString(key), annot->fvalue);
+			else
+				ctx->AddDebugAnnotation(key, annot->fvalue);
+			break;
+		case WESTON_DEBUG_ANNOTATION_DOUBLE_VAL:
+			if (use_built_key)
+				ctx->AddDebugAnnotation(perfetto::DynamicString(key), annot->dvalue);
+			else
+				ctx->AddDebugAnnotation(key, annot->dvalue);
+			break;
+		case WESTON_DEBUG_ANNOTATION_STR_VAL:
+			if (use_built_key)
+				ctx->AddDebugAnnotation(perfetto::DynamicString(key), annot->svalue);
+			else
+				ctx->AddDebugAnnotation(key, annot->svalue);
+			break;
+		case WESTON_DEBUG_ANNOTATION_FLOW:
+			perfetto::Flow::ProcessScoped(annot->flow_value)(*ctx);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void
+util_perfetto_trace_commit_debug_annots(const char *name,
+					struct weston_debug_annotations *annots)
+{
+	TRACE_EVENT_INSTANT(UTIL_PERFETTO_CATEGORY_DEFAULT_STR,
+			    nullptr,
+			    [&](perfetto::EventContext ctx) {
+				ctx.event()->set_name(name);
+				util_perfetto_flush_debug_annotation(&ctx, annots);
+	});
+}
+
+void
+util_perfetto_trace_commit_annotate_func(const char *name,
+					 struct weston_debug_annotations *annots)
+{
+	TRACE_EVENT_BEGIN(UTIL_PERFETTO_CATEGORY_DEFAULT_STR,
+			  nullptr,
+			  [&](perfetto::EventContext ctx) {
+			  ctx.event()->set_name(name);
+			  util_perfetto_flush_debug_annotation(&ctx, annots);
+	});
 }
 
 class UtilPerfettoObserver : public perfetto::TrackEventSessionObserver {

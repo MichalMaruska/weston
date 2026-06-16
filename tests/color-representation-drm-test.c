@@ -65,16 +65,18 @@ fixture_setup(struct weston_test_harness *harness, const struct setup_args *arg)
 }
 DECLARE_FIXTURE_SETUP_WITH_ARG(fixture_setup, my_setup_args, meta);
 
-TEST_P(color_representation_drm, color_state_cases) {
-
-#if 0
-	const struct color_state *color_state = data;
+static enum test_result_code
+color_representation_drm(struct wet_testsuite_data *suite_data,
+			 const struct color_state *color_state)
+{
 	const struct setup_args *args = &my_setup_args[get_test_fixture_index()];
 
-	/* FIXME: this fails transiently/sporadically in CI with a Mesa crash:
-	 * test-color-representation-drm: ../src/gallium/drivers/llvmpipe/lp_scene.c:180: init_scene_texture: Assertion `ssurf->map' failed. */
-	 return test_color_representation(color_state, args->buffer_type,
+	return test_color_representation(color_state, args->buffer_type,
+					 CLIENT_BUFFER_TYPE_DMABUF,
+					 WESTON_CAPTURE_V1_SOURCE_WRITEBACK,
 					 FB_PRESENTED_ZERO_COPY);
-#endif
-	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN_ARG(color_representation_drm, color_state_cases),
+);

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019 Collabora, Ltd.
+ * Copyright © 2019-2025 Collabora, Ltd.
  * Copyright © 2019 Harish Krupo
  * Copyright © 2019 Intel Corporation
  * Copyright 2021 Advanced Micro Devices, Inc.
@@ -134,14 +134,15 @@ enum gl_extension_flag {
 	EXTENSION_EXT_EGL_IMAGE_STORAGE           = 1ull << 8,
 	EXTENSION_EXT_MAP_BUFFER_RANGE            = 1ull << 9,
 	EXTENSION_EXT_READ_FORMAT_BGRA            = 1ull << 10,
-	EXTENSION_EXT_TEXTURE_FORMAT_BGRA8888     = 1ull << 11,
-	EXTENSION_EXT_TEXTURE_NORM16              = 1ull << 12,
-	EXTENSION_EXT_TEXTURE_RG                  = 1ull << 13,
-	EXTENSION_EXT_TEXTURE_SRGB_R8             = 1ull << 14,
-	EXTENSION_EXT_TEXTURE_SRGB_RG8            = 1ull << 15,
-	EXTENSION_EXT_TEXTURE_STORAGE             = 1ull << 16,
-	EXTENSION_EXT_TEXTURE_TYPE_2_10_10_10_REV = 1ull << 17,
-	EXTENSION_EXT_UNPACK_SUBIMAGE             = 1ull << 18,
+	EXTENSION_EXT_SHADER_FB_FETCH_NC          = 1ull << 11,
+	EXTENSION_EXT_TEXTURE_FORMAT_BGRA8888     = 1ull << 12,
+	EXTENSION_EXT_TEXTURE_NORM16              = 1ull << 13,
+	EXTENSION_EXT_TEXTURE_RG                  = 1ull << 14,
+	EXTENSION_EXT_TEXTURE_SRGB_R8             = 1ull << 15,
+	EXTENSION_EXT_TEXTURE_SRGB_RG8            = 1ull << 16,
+	EXTENSION_EXT_TEXTURE_STORAGE             = 1ull << 17,
+	EXTENSION_EXT_TEXTURE_TYPE_2_10_10_10_REV = 1ull << 18,
+	EXTENSION_EXT_UNPACK_SUBIMAGE             = 1ull << 19,
 	EXTENSION_NV_PACKED_FLOAT                 = 1ull << 20,
 	EXTENSION_NV_PIXEL_BUFFER_OBJECT          = 1ull << 21,
 	EXTENSION_OES_EGL_IMAGE                   = 1ull << 22,
@@ -203,6 +204,10 @@ enum gl_feature_flag {
 
 	/* GL renderer can create 3D textures. */
 	FEATURE_TEXTURE_3D = 1ull << 9,
+
+	/* GL renderer can do blending explicitly in the fragment shader,
+	 * using framebuffer fetch and store curves. */
+	FEATURE_SHADER_BLENDING = 1ull << 10,
 };
 
 /* Keep the following in sync with vertex.glsl. */
@@ -226,6 +231,7 @@ enum gl_shader_texture_variant {
 enum gl_shader_color_effect {
 	SHADER_COLOR_EFFECT_NONE = 0,
 	SHADER_COLOR_EFFECT_INVERSION,
+	SHADER_COLOR_EFFECT_GRAYSCALE,
 	SHADER_COLOR_EFFECT_CVD_CORRECTION,
 };
 
@@ -246,6 +252,12 @@ enum gl_shader_color_mapping {
 	SHADER_COLOR_MAPPING_MATRIX,
 };
 
+/* Keep the following in sync with fragment.glsl. */
+enum gl_shader_fb_alpha_encoding {
+	SHADER_FB_ALPHA_PREMULT = 0,
+	SHADER_FB_ALPHA_STRAIGHT,
+};
+
 enum gl_shader_attrib_loc {
 	SHADER_ATTRIB_LOC_POSITION = 0,
 	SHADER_ATTRIB_LOC_TEXCOORD,
@@ -258,12 +270,16 @@ enum gl_tex_unit {
 	TEX_UNIT_COLOR_MAPPING,
 	TEX_UNIT_COLOR_POST_CURVE,
 	TEX_UNIT_WIREFRAME,
-	TEX_UNIT_LAST,
+
+	TEX_UNIT_COUNT_REQUIRED,
+	/* For all units below, check gr->max_texture_image_units etc. */
+
+	TEX_UNIT_FB_FETCH_CURVE = TEX_UNIT_COUNT_REQUIRED,
+	TEX_UNIT_FB_STORE_CURVE,
+	TEX_UNIT_COUNT_OPTIONAL,
 };
-static_assert(TEX_UNIT_LAST < 8, "OpenGL ES 2.0 requires at least 8 texture "
-	      "units. Consider replacing this assert with a "
-	      "GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS check at display creation "
-	      "to require more.");
+static_assert(TEX_UNIT_COUNT_REQUIRED <= 8, "OpenGL ES 2.0 requires at least 8 texture "
+	      "units. Cannot assume having more without a runtime check.");
 
 enum gl_bgra8_texture_support {
 	BGRA8_TEXTURE_SUPPORT_STORAGE = 0,
@@ -295,6 +311,7 @@ struct gl_shader_requirements
 	bool input_is_premult:1;
 	bool tint:1;
 	bool wireframe:1;
+	bool swizzle_idx:1;
 
 	unsigned color_effect:2; /* enum gl_shader_color_effect */
 
@@ -302,11 +319,16 @@ struct gl_shader_requirements
 	unsigned color_mapping:2; /* enum gl_shader_color_mapping */
 	unsigned color_post_curve:3; /* enum gl_shader_color_curve */
 
+	bool shader_blending:1;
+	unsigned fb_alpha_encoding:1;  /* enum gl_shader_fb_alpha_encoding */
+	unsigned fb_fetch_curve:3; /* enum gl_shader_color_curve */
+	unsigned fb_store_curve:3; /* enum gl_shader_color_curve */
+
 	/*
 	 * The total size of all bitfields plus pad_bits_ must fill up exactly
 	 * how many bytes the compiler allocates for them together.
 	 */
-	unsigned pad_bits_:14;
+	unsigned pad_bits_:5;
 };
 static_assert(sizeof(struct gl_shader_requirements) ==
 	      4 /* total bitfield size in bytes */,
@@ -339,11 +361,12 @@ struct gl_texture_parameters {
 };
 
 struct gl_shader;
+struct gl_shader_blender;
 struct weston_color_transform;
 struct dmabuf_allocator;
 
 union gl_shader_config_color_effect {
-	struct weston_mat3f cvd_correction;
+	struct weston_cvd_correction cvd;
 };
 
 union gl_shader_config_color_curve {
@@ -372,7 +395,7 @@ struct gl_shader_config {
 
 	struct weston_matrix projection;
 	struct weston_matrix surface_to_buffer;
-	float view_alpha;
+	float paint_node_alpha;
 	GLfloat unicolor[4];
 	GLfloat tint[4];
 
@@ -388,6 +411,9 @@ struct gl_shader_config {
 	union gl_shader_config_color_mapping color_mapping;
 	union gl_shader_config_color_curve color_post_curve;
 
+	union gl_shader_config_color_curve fb_fetch_curve;
+	union gl_shader_config_color_curve fb_store_curve;
+
 	enum weston_color_matrix_coef yuv_coefficients;
 	enum weston_color_quant_range yuv_range;
 };
@@ -395,7 +421,8 @@ struct gl_shader_config {
 struct gl_renderer {
 	struct weston_renderer base;
 	struct weston_compositor *compositor;
-	struct weston_log_scope *renderer_scope;
+	struct weston_log_scope *extensions_scope;
+	struct weston_log_scope *paint_node_scope;
 
 	/* Debug modes. */
 	struct weston_binding *debug_mode_binding;
@@ -502,10 +529,15 @@ struct gl_renderer {
 	PFNGLTEXSTORAGE2DEXTPROC tex_storage_2d;
 	PFNGLTEXSTORAGE3DEXTPROC tex_storage_3d;
 
+	/* GL_EXT_shader_framebuffer_fetch_non_coherent */
+	PFNGLFRAMEBUFFERFETCHBARRIEREXTPROC framebuffer_fetch_barrier;
+
 	uint64_t features;
 
 	GLenum pbo_usage;
 	enum gl_bgra8_texture_support bgra8_texture_support;
+	int max_texture_image_units;
+	int max_combined_texture_image_units;
 
 	bool blend_state;
 
@@ -741,7 +773,7 @@ void
 gl_renderer_garbage_collect_programs(struct gl_renderer *gr);
 
 bool
-gl_renderer_use_program(struct gl_renderer *gr,
+gl_renderer_use_program(struct gl_renderer *gr, struct weston_paint_node *pnode,
 			const struct gl_shader_config *sconf);
 
 struct weston_log_scope *
@@ -756,5 +788,19 @@ bool
 gl_shader_config_set_color_effect(struct gl_renderer *gr,
 				  struct gl_shader_config *sconf,
 				  struct weston_output_color_effect *effect);
+const char *
+weston_output_cvd_type_to_str(struct weston_cvd_correction cvd);
+
+void
+gl_shader_blender_destroy(struct gl_shader_blender *shader_blender);
+
+struct gl_shader_blender *
+gl_shader_blender_create(struct gl_renderer *gr, struct weston_output *output,
+			 enum gl_shader_fb_alpha_encoding fb_alpha_encoding);
+
+void
+gl_shader_config_set_blender(struct gl_renderer *gr,
+			     struct gl_shader_config *sconf,
+			     const struct gl_shader_blender *shader_blender);
 
 #endif /* GL_RENDERER_INTERNAL_H */

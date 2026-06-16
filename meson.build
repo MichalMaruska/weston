@@ -1,6 +1,6 @@
 project('weston',
 	['c', 'cpp'],
-	version: '15.0.1',
+	version: '15.0.91',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu11',
@@ -10,7 +10,7 @@ project('weston',
 	license: 'MIT/Expat',
 )
 
-libweston_major = 15
+libweston_major = 16
 
 # libweston_revision is manufactured to follow the autotools build's
 # library file naming, thanks to libtool
@@ -117,6 +117,7 @@ endforeach
 
 env_modmap = ''
 
+config_h.set('_FILE_OFFSET_BITS', '64')
 config_h.set('_GNU_SOURCE', '1')
 config_h.set('_ALL_SOURCE', '1')
 config_h.set('EGL_NO_X11', '1')
@@ -220,6 +221,9 @@ else
 	prog_glslang = find_program('', required : false)
 endif
 
+if get_option('allow-deprecated-modeset')
+	config_h.set('ALLOW_DEPRECATED_MODESET', '1')
+endif
 
 subdir('include')
 subdir('protocol')
@@ -228,14 +232,12 @@ subdir('libweston')
 subdir('xwayland')
 subdir('frontend')
 subdir('desktop-shell')
-subdir('fullscreen-shell')
 subdir('ivi-shell')
 subdir('kiosk-shell')
 subdir('lua-shell')
 subdir('remoting')
 subdir('pipewire')
 subdir('clients')
-subdir('wcap')
 if get_option('tests')
 	subdir('tests')
 endif
@@ -243,12 +245,10 @@ subdir('data')
 subdir('man')
 subdir('pam')
 
-if meson.version().version_compare('>= 0.58.0')
-	devenv = environment()
-	devenv.set('WESTON_MODULE_MAP', env_modmap)
-	devenv.set('WESTON_DATA_DIR', meson.current_source_dir() / 'data')
-	meson.add_devenv(devenv)
-endif
+devenv = environment()
+devenv.set('WESTON_MODULE_MAP', env_modmap)
+devenv.set('WESTON_DATA_DIR', meson.current_source_dir() / 'data')
+meson.add_devenv(devenv)
 
 configure_file(output: 'config.h', configuration: config_h)
 
@@ -257,3 +257,5 @@ if get_option('doc')
 else
 	message('Documentation will not be built. Use -Ddoc to build it.')
 endif
+
+subdir('coverage')

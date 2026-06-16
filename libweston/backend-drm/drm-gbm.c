@@ -110,7 +110,7 @@ init_egl(struct drm_backend *b)
 {
 	struct drm_device *device = b->drm;
 
-	b->gbm = gbm_create_device(device->drm.fd);
+	b->gbm = gbm_create_device(device->kms_device->fd);
 	if (!b->gbm)
 		return -1;
 
@@ -128,7 +128,7 @@ init_vulkan(struct drm_backend *b)
 {
 	struct drm_device *device = b->drm;
 
-	b->gbm = gbm_create_device(device->drm.fd);
+	b->gbm = gbm_create_device(device->kms_device->fd);
 	if (!b->gbm)
 		return -1;
 
@@ -174,13 +174,13 @@ drm_output_init_cursor_egl(struct drm_output *output, struct drm_backend *b)
 	unsigned int i;
 
 	/* No point creating cursors if we don't have a plane for them. */
-	if (!output->cursor_plane)
+	if (!output->cursor_handle)
 		return 0;
 
 	for (i = 0; i < ARRAY_LENGTH(output->gbm_cursor_fb); i++) {
 		struct gbm_bo *bo;
 
-		if (gbm_device_get_fd(b->gbm) != output->device->drm.fd) {
+		if (gbm_device_get_fd(b->gbm) != output->device->kms_device->fd) {
 			output->gbm_cursor_fb[i] =
 				drm_fb_create_dumb(output->device,
 						   device->cursor_width,
@@ -198,7 +198,7 @@ drm_output_init_cursor_egl(struct drm_output *output, struct drm_backend *b)
 				goto err;
 
 			output->gbm_cursor_fb[i] =
-				drm_fb_get_from_bo(bo, device, false, BUFFER_CURSOR);
+				drm_fb_get_from_bo(bo, device, BUFFER_CURSOR);
 			if (!output->gbm_cursor_fb[i]) {
 				gbm_bo_destroy(bo);
 				goto err;
@@ -223,13 +223,13 @@ drm_output_init_cursor_vulkan(struct drm_output *output, struct drm_backend *b)
 	unsigned int i;
 
 	/* No point creating cursors if we don't have a plane for them. */
-	if (!output->cursor_plane)
+	if (!output->cursor_handle)
 		return 0;
 
 	for (i = 0; i < ARRAY_LENGTH(output->gbm_cursor_fb); i++) {
 		struct gbm_bo *bo;
 
-		if (gbm_device_get_fd(b->gbm) != output->device->drm.fd) {
+		if (gbm_device_get_fd(b->gbm) != output->device->kms_device->fd) {
 			output->gbm_cursor_fb[i] =
 				drm_fb_create_dumb(output->device,
 						   device->cursor_width,
@@ -247,7 +247,7 @@ drm_output_init_cursor_vulkan(struct drm_output *output, struct drm_backend *b)
 				goto err;
 
 			output->gbm_cursor_fb[i] =
-				drm_fb_get_from_bo(bo, device, false, BUFFER_CURSOR);
+				drm_fb_get_from_bo(bo, device, BUFFER_CURSOR);
 			if (!output->gbm_cursor_fb[i]) {
 				gbm_bo_destroy(bo);
 				goto err;
@@ -269,7 +269,7 @@ static void
 create_gbm_surface(struct gbm_device *gbm, struct drm_output *output)
 {
 	struct weston_mode *mode = output->base.current_mode;
-	struct drm_plane *plane = output->scanout_plane;
+	struct drm_plane *plane = output->scanout_handle->plane;
 	struct weston_drm_format *fmt;
 	const uint64_t *modifiers;
 	unsigned int num_modifiers;
@@ -298,7 +298,7 @@ create_gbm_surface(struct gbm_device *gbm, struct drm_output *output)
 	 * on a different GPU), we have to use linear buffers to make sure that
 	 * the allocated GBM surface is correctly displayed on the KMS device.
 	 */
-	if (gbm_device_get_fd(gbm) != output->device->drm.fd)
+	if (gbm_device_get_fd(gbm) != output->device->kms_device->fd)
 		output->gbm_bo_flags |= GBM_BO_USE_LINEAR;
 
 	/* We may allocate with no modifiers in the following situations:
@@ -413,14 +413,16 @@ drm_output_pick_format_egl(struct drm_output *output)
 
 	/**
 	 * This computes the intersection between renderer formats supported by
-	 * EGL and the output->scanout_plane supported formats. We need that as
+	 * EGL and the output scanout plane supported formats. We need that as
 	 * we want to select a format supported by both.
 	 */
 	renderer_formats =
 		renderer->gl->get_supported_rendering_formats(b->compositor,
 							      &renderer_formats_count);
 	for (i = 0; i < renderer_formats_count; i++) {
-		if (!weston_drm_format_array_find_format(&output->scanout_plane->formats,
+		struct drm_plane *scanout_plane = output->scanout_handle->plane;
+
+		if (!weston_drm_format_array_find_format(&scanout_plane->formats,
 							 renderer_formats[i]->format))
 			continue;
 
@@ -443,7 +445,7 @@ drm_output_pick_format_egl(struct drm_output *output)
 	}
 
 	if (min_bpc != 0) {
-		if (b->has_underlay) {
+		if (output->has_underlay) {
 			output->format =
 				find_compatible_format(compositor, &supported_formats,
 						       min_bpc, component_type,
@@ -454,7 +456,7 @@ drm_output_pick_format_egl(struct drm_output *output)
 			weston_log("Disabling underlay planes: EGL GBM or the primary plane for output '%s'\n" \
 				   "does not support format with min bpc %u and alpha channel.\n",
 				   output->base.name, min_bpc);
-			b->has_underlay = false;
+			output->has_underlay = false;
 		}
 
 		output->format =
@@ -484,11 +486,11 @@ drm_output_pick_format_egl(struct drm_output *output)
 		goto done;
 	}
 
-	if (b->has_underlay && (b->format->bits.a == 0)) {
+	if (output->has_underlay && (b->format->bits.a == 0)) {
 		weston_log("Disabling underlay planes: b->format %s does not have alpha channel,\n"
 			   "which is required to support underlay planes.\n",
 			   b->format->drm_format_name);
-		b->has_underlay = false;
+		output->has_underlay = false;
 	}
 
 	output->format = b->format;
@@ -511,7 +513,7 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 		return -1;
 
 	format[0] = output->format;
-	if (!b->has_underlay)
+	if (!output->has_underlay)
 		format[1] = fallback_format_for(output->format);
 
 	options.formats = format;
@@ -548,7 +550,7 @@ static struct gbm_bo *
 drm_gbm_create_bo(struct gbm_device *gbm, struct drm_output *output)
 {
 	struct weston_mode *mode = output->base.current_mode;
-	struct drm_plane *plane = output->scanout_plane;
+	struct drm_plane *plane = output->scanout_handle->plane;
 	struct weston_drm_format *fmt;
 	const uint64_t *modifiers;
 	unsigned int num_modifiers;
@@ -585,7 +587,7 @@ drm_gbm_create_bo(struct gbm_device *gbm, struct drm_output *output)
 	 * use linear buffers and hope that the allocated GBM surface
 	 * is correctly displayed on the KMS device.
 	 */
-	if (gbm_device_get_fd(gbm) != output->device->drm.fd)
+	if (gbm_device_get_fd(gbm) != output->device->kms_device->fd)
 		output->gbm_bo_flags |= GBM_BO_USE_LINEAR;
 
 	if (!bo) {
@@ -619,7 +621,7 @@ drm_gbm_dmabuf_destroy(struct linux_dmabuf_memory *dmabuf)
 		close(attributes->fd[i]);
 	free(dmabuf->attributes);
 
-	free(dmabuf);
+	free(drm_gbm_dmabuf);
 }
 
 static struct drm_gbm_dmabuf *
@@ -701,11 +703,11 @@ drm_output_pick_format_vulkan(struct drm_output *output)
 	assert(b->format);
 	output->format = b->format;
 
-	if (b->has_underlay && (output->format->bits.a == 0)) {
+	if (output->has_underlay && (output->format->bits.a == 0)) {
 		weston_log("Disabling underlay planes: output '%s' with format %s does not have alpha channel,\n"
 			   "which is required to support underlay planes.\n",
 			   output->base.name, output->format->drm_format_name);
-		b->has_underlay = false;
+		output->has_underlay = false;
 	}
 
 	return true;
@@ -753,12 +755,8 @@ drm_output_fini_egl(struct drm_output *output)
 	const struct weston_renderer *renderer = b->compositor->renderer;
 
 	/* Destroying the GBM surface will destroy all our GBM buffers,
-	 * regardless of refcount. Ensure we destroy them here. */
-	if (!b->compositor->shutting_down &&
-	    output->scanout_plane->state_cur->fb &&
-	    output->scanout_plane->state_cur->fb->type == BUFFER_GBM_SURFACE) {
-		drm_plane_reset_state(output->scanout_plane);
-	}
+	 * regardless of refcount. */
+	weston_assert_ptr_null(b->compositor, output->scanout_handle);
 
 	renderer->gl->output_destroy(&output->base);
 	gbm_surface_destroy(output->gbm_surface);
@@ -772,11 +770,7 @@ drm_output_fini_vulkan(struct drm_output *output)
 	struct drm_backend *b = output->backend;
 	const struct weston_renderer *renderer = b->compositor->renderer;
 
-	if (!b->compositor->shutting_down &&
-	    output->scanout_plane->state_cur->fb &&
-	    output->scanout_plane->state_cur->fb->type == BUFFER_DMABUF_BACKEND) {
-		drm_plane_reset_state(output->scanout_plane);
-	}
+	weston_assert_ptr_null(b->compositor, output->scanout_handle);
 
 	for (unsigned int i = 0; i < ARRAY_LENGTH(output->renderbuffer); i++)
 		renderer->destroy_renderbuffer(output->renderbuffer[i]);
@@ -806,8 +800,7 @@ drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage)
 
 	/* Output transparent/opaque image according to the format required by
 	 * the client. */
-	ret = drm_fb_get_from_bo(bo, device, !output->format->opaque_substitute,
-	                         BUFFER_GBM_SURFACE);
+	ret = drm_fb_get_from_bo(bo, device, BUFFER_GBM_SURFACE);
 	if (!ret) {
 		weston_log("failed to get drm_fb for bo\n");
 		gbm_surface_release_buffer(output->gbm_surface, bo);
@@ -822,13 +815,15 @@ struct drm_fb *
 drm_output_render_vulkan(struct drm_output_state *state, pixman_region32_t *damage)
 {
 	struct drm_output *output = state->output;
+	struct drm_plane_state *pstate =
+		drm_output_state_get_plane(state, output->scanout_handle->plane);
+	struct weston_renderer *renderer = output->base.compositor->renderer;
 	struct drm_device *device = output->device;
 	struct linux_dmabuf_memory *dmabuf;
 	struct drm_fb *ret;
 
-	output->base.compositor->renderer->repaint_output(&output->base,
-							  damage,
-							  output->renderbuffer[output->current_image]);
+	renderer->repaint_output(&output->base, damage,
+				 output->renderbuffer[output->current_image]);
 
 	dmabuf = output->linux_dmabuf_memory[output->current_image];
 	if (!dmabuf) {
@@ -839,10 +834,16 @@ drm_output_render_vulkan(struct drm_output_state *state, pixman_region32_t *dama
 	/* Output transparent/opaque image according to the format required by
 	 * the client. */
 	ret = drm_fb_get_from_dmabuf_attributes(dmabuf->attributes, device,
-						!output->format->opaque_substitute,
 						false, true, NULL);
 	if (!ret) {
 		weston_log("failed to get drm_fb for dmabuf\n");
+		return NULL;
+	}
+
+	pstate->in_fence_fd = renderer->vulkan->create_fence_fd(&output->base);
+	if (pstate->in_fence_fd < 1) {
+		weston_log("failed to get fence fd from rendering\n");
+		drm_fb_unref(ret);
 		return NULL;
 	}
 

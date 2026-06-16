@@ -81,7 +81,7 @@ output_create_view(struct test_output *t_output)
 	       .r = 0.5, .g = 0.5, .b = 0.5, .a = 1.0,
 	       .pos.c = weston_coord(0, 0),
 	       .width = 320, .height = 240,
-	       .get_label = NULL,
+	       .label = NULL,
 	       .surface_committed = NULL,
 	       .surface_private = NULL,
        };
@@ -123,9 +123,15 @@ create_outputs(struct weston_compositor *compositor)
                output_create(output);
 }
 
-PLUGIN_TEST(real_usecase_one)
+static enum test_result_code
+real_usecase_one(struct wet_testsuite_data *suite_data,
+		 struct weston_compositor *compositor)
 {
        create_outputs(compositor);
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN_PLUGIN(real_usecase_one),
+);

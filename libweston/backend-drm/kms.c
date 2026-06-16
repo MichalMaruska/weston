@@ -37,7 +37,10 @@
 #include <libweston/libweston.h>
 #include <libweston/backend-drm.h>
 #include "shared/helpers.h"
+#include "shared/string-helpers.h"
+#include "shared/weston-assert.h"
 #include "shared/weston-drm-fourcc.h"
+#include "colorops.h"
 #include "drm-internal.h"
 #include "pixel-formats.h"
 #include "presentation-time-server-protocol.h"
@@ -91,12 +94,30 @@ struct drm_property_enum_info plane_color_encoding_enums[] = {
 	},
 };
 
+struct drm_property_enum_info plane_color_pipeline_enums[] = {
+	[WDRM_PLANE_COLOR_PIPELINE_DUMMY] = {
+		.name = "dummy",
+	},
+};
+
 struct drm_property_enum_info plane_color_range_enums[] = {
 	[WDRM_PLANE_COLOR_RANGE_LIMITED] = {
 		.name = "YCbCr limited range",
 	},
 	[WDRM_PLANE_COLOR_RANGE_FULL] = {
 		.name = "YCbCr full range",
+	},
+};
+
+struct drm_property_enum_info plane_blend_enums[] = {
+	[WDRM_PLANE_BLEND_NONE] = {
+		.name = "None",
+	},
+	[WDRM_PLANE_BLEND_PREMULT] = {
+		.name = "Pre-multiplied",
+	},
+	[WDRM_PLANE_BLEND_COVERAGE] = {
+		.name = "Coverage",
 	},
 };
 
@@ -126,15 +147,80 @@ const struct drm_property_info plane_props[] = {
 		.num_enum_values = WDRM_PLANE_ROTATION__COUNT,
 	},
 	[WDRM_PLANE_ALPHA] = { .name = "alpha" },
+	[WDRM_PLANE_BLEND] = {
+		.name = "pixel blend mode",
+		.enum_values = plane_blend_enums,
+		.num_enum_values = WDRM_PLANE_BLEND__COUNT,
+	},
 	[WDRM_PLANE_COLOR_ENCODING] = {
 		.name = "COLOR_ENCODING",
 		.enum_values = plane_color_encoding_enums,
 		.num_enum_values = WDRM_PLANE_COLOR_ENCODING__COUNT,
 	},
+	[WDRM_PLANE_COLOR_PIPELINE] = {
+		.name = "COLOR_PIPELINE",
+		.enum_values = plane_color_pipeline_enums,
+		.num_enum_values = WDRM_PLANE_COLOR_PIPELINE__COUNT,
+	},
 	[WDRM_PLANE_COLOR_RANGE] = {
 		.name = "COLOR_RANGE",
 		.enum_values = plane_color_range_enums,
 		.num_enum_values = WDRM_PLANE_COLOR_RANGE__COUNT,
+	},
+};
+
+static struct drm_property_enum_info colorop_type_enums[] = {
+	[WDRM_COLOROP_TYPE_1D_CURVE] = { .name = "1D Curve", },
+	[WDRM_COLOROP_TYPE_1D_LUT] = { .name = "1D LUT", },
+	[WDRM_COLOROP_TYPE_CTM_3X4] = { .name = "3x4 Matrix", },
+	[WDRM_COLOROP_TYPE_MULTIPLIER] = { .name = "Multiplier", },
+	[WDRM_COLOROP_TYPE_3D_LUT] = { .name = "3D LUT", },
+};
+
+static struct drm_property_enum_info colorop_curve_1d_enums[] = {
+	[WDRM_COLOROP_CURVE_1D_SRGB_EOTF] = { .name = "sRGB EOTF", },
+	[WDRM_COLOROP_CURVE_1D_SRGB_INV_EOTF] = { .name = "sRGB Inverse EOTF", },
+	[WDRM_COLOROP_CURVE_1D_PQ_125_EOTF] = { .name = "PQ 125 EOTF", },
+	[WDRM_COLOROP_CURVE_1D_PQ_125_INV_EOTF] = { .name = "PQ 125 Inverse EOTF", },
+	[WDRM_COLOROP_CURVE_1D_BT2020_INV_OETF] = { .name = "BT.2020 Inverse OETF", },
+	[WDRM_COLOROP_CURVE_1D_BT2020_OETF] = { .name = "BT.2020 OETF", },
+	[WDRM_COLOROP_CURVE_1D_GAMMA_22] = { .name = "Gamma 2.2", },
+	[WDRM_COLOROP_CURVE_1D_GAMMA_22_INV] = { .name = "Gamma 2.2 Inverse", },
+};
+
+static struct drm_property_enum_info colorop_lut1d_interpolation_enums[] = {
+	[WDRM_COLOROP_LUT1D_INTERPOLATION_LINEAR] = { .name = "Linear", },
+};
+
+static struct drm_property_enum_info colorop_lut3d_interpolation_enums[] = {
+	[WDRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL] = { .name = "Tetrahedral", },
+};
+
+const struct drm_property_info colorop_props[] = {
+	[WDRM_COLOROP_TYPE] = {
+		.name = "TYPE",
+		.enum_values = colorop_type_enums,
+		.num_enum_values = WDRM_COLOROP_TYPE__COUNT,
+	},
+	[WDRM_COLOROP_NEXT] = { .name = "NEXT", },
+	[WDRM_COLOROP_BYPASS] = { .name = "BYPASS", },
+	[WDRM_COLOROP_SIZE] = { .name = "SIZE", },
+	[WDRM_COLOROP_DATA] = { .name = "DATA", },
+	[WDRM_COLOROP_MULTIPLIER] = { .name = "MULTIPLIER", },
+	[WDRM_COLOROP_CURVE_1D] = {
+		.name = "CURVE_1D_TYPE",
+		.enum_values = colorop_curve_1d_enums,
+		.num_enum_values = WDRM_COLOROP_CURVE_1D__COUNT,
+	},
+	[WDRM_COLOROP_LUT1D_INTERPOLATION] = {
+		.name = "LUT1D_INTERPOLATION",
+		.enum_values = colorop_lut1d_interpolation_enums,
+		.num_enum_values = WDRM_COLOROP_LUT1D_INTERPOLATION__COUNT,
+	},
+	[WDRM_COLOROP_LUT3D_INTERPOLATION] = {
+		.name = "LUT3D_INTERPOLATION",
+		.enum_values = colorop_lut3d_interpolation_enums,
+		.num_enum_values = WDRM_COLOROP_LUT3D_INTERPOLATION__COUNT,
 	},
 };
 
@@ -208,6 +294,20 @@ struct drm_property_enum_info colorspace_enums[] = {
 	[WDRM_COLORSPACE_BT601_YCC] = { .name = "BT601_YCC", },
 };
 
+struct drm_property_enum_info underscan_enums[] = {
+	[WDRM_UNDERSCAN_OFF] = { .name = "off", },
+	[WDRM_UNDERSCAN_ON] = { .name = "on", },
+	[WDRM_UNDERSCAN_AUTO] = { .name = "auto", },
+};
+
+struct drm_property_enum_info color_format_enums[] = {
+	[WDRM_COLOR_FORMAT_AUTO] = { .name = "AUTO", },
+	[WDRM_COLOR_FORMAT_RGB] = { .name = "RGB", },
+	[WDRM_COLOR_FORMAT_YUV422] = { .name = "YUV 4:2:2", },
+	[WDRM_COLOR_FORMAT_YUV444] = { .name = "YUV 4:4:4", },
+	[WDRM_COLOR_FORMAT_YUV420] = { .name = "YUV 4:2:0", },
+};
+
 const struct drm_property_info connector_props[] = {
 	[WDRM_CONNECTOR_EDID] = { .name = "EDID" },
 	[WDRM_CONNECTOR_DPMS] = {
@@ -252,6 +352,34 @@ const struct drm_property_info connector_props[] = {
 	[WDRM_CONNECTOR_VRR_CAPABLE] = {
 		.name = "vrr_capable",
 	},
+	[WDRM_CONNECTOR_UNDERSCAN] = {
+		.name = "underscan",
+		.enum_values = underscan_enums,
+		.num_enum_values = WDRM_UNDERSCAN__COUNT,
+	},
+	[WDRM_CONNECTOR_UNDERSCAN_HBORDER] = {
+		.name = "underscan hborder",
+	},
+	[WDRM_CONNECTOR_UNDERSCAN_VBORDER] = {
+		.name = "underscan vborder",
+	},
+	[WDRM_CONNECTOR_LEFT_MARGIN] = {
+		.name = "left margin",
+	},
+	[WDRM_CONNECTOR_RIGHT_MARGIN] = {
+		.name = "right margin",
+	},
+	[WDRM_CONNECTOR_TOP_MARGIN] = {
+		.name = "top margin",
+	},
+	[WDRM_CONNECTOR_BOTTOM_MARGIN] = {
+		.name = "bottom margin",
+	},
+	[WDRM_CONNECTOR_COLOR_FORMAT] = {
+		.name = "color format",
+		.enum_values = color_format_enums,
+		.num_enum_values = WDRM_COLOR_FORMAT__COUNT,
+	},
 };
 
 const struct drm_property_info crtc_props[] = {
@@ -263,6 +391,7 @@ const struct drm_property_info crtc_props[] = {
 	[WDRM_CRTC_GAMMA_LUT] = { .name = "GAMMA_LUT", },
 	[WDRM_CRTC_GAMMA_LUT_SIZE] = { .name = "GAMMA_LUT_SIZE", },
 	[WDRM_CRTC_VRR_ENABLED] = { .name = "VRR_ENABLED", },
+	[WDRM_CRTC_BACKGROUND_COLOR] = { .name = "BACKGROUND_COLOR", },
 };
 
 
@@ -290,7 +419,7 @@ enum drm_state_apply_mode {
  * @param def Value to return if property is not found
  */
 uint64_t
-drm_property_get_value(struct drm_property_info *info,
+drm_property_get_value(const struct drm_property_info *info,
 		       const drmModeObjectProperties *props,
 		       uint64_t def)
 {
@@ -338,8 +467,8 @@ drm_property_get_value(struct drm_property_info *info,
  * @param info Internal structure for property to look up
  * @param props Raw KMS properties for the target object
  */
-uint64_t *
-drm_property_get_range_values(struct drm_property_info *info,
+const uint64_t *
+drm_property_get_range_values(const struct drm_property_info *info,
 			      const drmModeObjectProperties *props)
 {
 	unsigned int i;
@@ -367,10 +496,10 @@ drm_property_get_range_values(struct drm_property_info *info,
  * value to achieve the requested rotation on this plane is returned.
  */
 uint64_t
-drm_rotation_from_output_transform(struct drm_plane *plane,
+drm_rotation_from_output_transform(const struct drm_plane *plane,
 				   enum wl_output_transform ot)
 {
-	struct drm_property_info *info = &plane->props[WDRM_PLANE_ROTATION];
+	const struct drm_property_info *info = &plane->props[WDRM_PLANE_ROTATION];
 	enum wdrm_plane_rotation drm_rotation;
 	enum wdrm_plane_rotation drm_reflection = 0;
 	uint64_t out = 0;
@@ -472,11 +601,11 @@ wdrm_vrr_enabled_from_output(struct drm_output *drm_output)
  * @param props DRM object properties for the object
  */
 void
-drm_property_info_populate(struct drm_device *device,
+drm_property_info_populate(const struct drm_device *device,
 		           const struct drm_property_info *src,
 			   struct drm_property_info *info,
 			   unsigned int num_infos,
-			   drmModeObjectProperties *props)
+			   const drmModeObjectProperties *props)
 {
 	drmModePropertyRes *prop;
 	unsigned i, j;
@@ -504,7 +633,7 @@ drm_property_info_populate(struct drm_device *device,
 	for (i = 0; i < props->count_props; i++) {
 		unsigned int k;
 
-		prop = drmModeGetProperty(device->drm.fd, props->props[i]);
+		prop = drmModeGetProperty(device->kms_device->fd, props->props[i]);
 		if (!prop)
 			continue;
 
@@ -631,7 +760,7 @@ drm_plane_populate_formats(struct drm_plane *plane, const drmModePlane *kplane,
 	if (blob_id == 0)
 		goto fallback;
 
-	blob = drmModeGetPropertyBlob(device->drm.fd, blob_id);
+	blob = drmModeGetPropertyBlob(device->kms_device->fd, blob_id);
 	if (!blob)
 		goto fallback;
 
@@ -699,6 +828,31 @@ drm_plane_supports_color_range(struct drm_plane *plane,
 
 	info = &plane->props[WDRM_PLANE_COLOR_RANGE];
 	enum_info = &info->enum_values[range];
+
+	return enum_info->valid;
+}
+
+/**
+ * Check if a blend mode is supported by a KMS plane
+ *
+ * If the blend mode property is not supported by the plane, this assumes that
+ * the blend mode is unsupported if different from WDRM_PLANE_BLEND_DEFAULT.
+ *
+ * @param plane The KMS plane
+ * @param blend_mode The blend mode to check
+ * @return True if supported, false otherwise
+ */
+bool
+drm_plane_supports_blend_mode(struct drm_plane *plane,
+			      enum wdrm_plane_blend blend_mode)
+{
+	const struct drm_property_info *info = &plane->props[WDRM_PLANE_BLEND];
+	const struct drm_property_enum_info *enum_info;
+
+	if (info->prop_id == 0)
+		return blend_mode == WDRM_PLANE_BLEND_DEFAULT;
+
+	enum_info = &info->enum_values[blend_mode];
 
 	return enum_info->valid;
 }
@@ -776,28 +930,32 @@ drm_output_set_cursor(struct drm_output_state *output_state)
 	struct drm_output *output = output_state->output;
 	struct drm_device *device = output->device;
 	struct drm_crtc *crtc = output->crtc;
-	struct drm_plane *plane = output->cursor_plane;
+	struct drm_plane_handle *plane_handle  = output->cursor_handle;
+	struct drm_plane *plane;
 	struct drm_plane_state *state;
 	uint32_t handle;
 
-	if (!plane)
+	if (!plane_handle)
 		return;
+
+	plane = plane_handle->plane;
 
 	state = drm_output_state_get_existing_plane(output_state, plane);
 	if (!state)
 		return;
 
 	if (!state->fb) {
-		drmModeSetCursor(device->drm.fd, crtc->crtc_id, 0, 0, 0);
+		drmModeSetCursor(device->kms_device->fd, crtc->crtc_id, 0, 0, 0);
 		return;
 	}
 
 	assert(state->fb == output->gbm_cursor_fb[output->current_cursor]);
-	assert(!plane->state_cur->output || plane->state_cur->output == output);
+	assert(!plane->state_cur->handle ||
+	       plane->state_cur->handle->output == output);
 
 	handle = output->gbm_cursor_handle[output->current_cursor];
 	if (plane->state_cur->fb != state->fb) {
-		if (drmModeSetCursor(device->drm.fd, crtc->crtc_id, handle,
+		if (drmModeSetCursor(device->kms_device->fd, crtc->crtc_id, handle,
 				     device->cursor_width, device->cursor_height)) {
 			weston_log("failed to set cursor: %s\n",
 				   strerror(errno));
@@ -805,7 +963,7 @@ drm_output_set_cursor(struct drm_output_state *output_state)
 		}
 	}
 
-	if (drmModeMoveCursor(device->drm.fd, crtc->crtc_id,
+	if (drmModeMoveCursor(device->kms_device->fd, crtc->crtc_id,
 	                      state->dest_x, state->dest_y)) {
 		weston_log("failed to move cursor: %s\n", strerror(errno));
 		goto err;
@@ -815,7 +973,7 @@ drm_output_set_cursor(struct drm_output_state *output_state)
 
 err:
 	device->cursors_are_broken = true;
-	drmModeSetCursor(device->drm.fd, crtc->crtc_id, 0, 0, 0);
+	drmModeSetCursor(device->kms_device->fd, crtc->crtc_id, 0, 0, 0);
 }
 
 static void
@@ -840,7 +998,7 @@ drm_output_reset_legacy_gamma(struct drm_output *output)
 	for (i = 0; i < len; i++)
 		lut[i] = 0xffff * i / (len - 1);
 
-	ret = drmModeCrtcSetGamma(output->device->drm.fd,
+	ret = drmModeCrtcSetGamma(output->device->kms_device->fd,
 				  output->crtc->crtc_id,
 				  len, lut, lut, lut);
 	if (ret == -EOPNOTSUPP || ret == -ENOSYS)
@@ -859,7 +1017,7 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	struct drm_output *output = state->output;
 	struct drm_device *device = output->device;
 	struct drm_backend *backend = device->backend;
-	struct drm_plane *scanout_plane = output->scanout_plane;
+	struct drm_plane *scanout_plane = output->scanout_handle->plane;
 	struct drm_crtc *crtc = output->crtc;
 	struct drm_property_info *dpms_prop;
 	struct drm_plane_state *scanout_state;
@@ -877,15 +1035,15 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	}
 
 	if (state->dpms != WESTON_DPMS_ON) {
-		if (output->cursor_plane) {
-			ret = drmModeSetCursor(device->drm.fd, crtc->crtc_id,
+		if (output->cursor_handle) {
+			ret = drmModeSetCursor(device->kms_device->fd, crtc->crtc_id,
 					       0, 0, 0);
 			if (ret)
 				weston_log("drmModeSetCursor failed disable: %s\n",
 					   strerror(errno));
 		}
 
-		ret = drmModeSetCrtc(device->drm.fd, crtc->crtc_id, 0, 0, 0,
+		ret = drmModeSetCrtc(device->kms_device->fd, crtc->crtc_id, 0, 0, 0,
 				     NULL, 0, NULL);
 		if (ret)
 			weston_log("drmModeSetCrtc failed disabling: %s\n",
@@ -924,7 +1082,7 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	    scanout_plane->state_cur->fb->strides[0] !=
 	    scanout_state->fb->strides[0]) {
 
-		ret = drmModeSetCrtc(device->drm.fd, crtc->crtc_id,
+		ret = drmModeSetCrtc(device->kms_device->fd, crtc->crtc_id,
 				     scanout_state->fb->fb_id,
 				     0, 0,
 				     connectors, n_conn,
@@ -942,7 +1100,7 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 			   crtc->crtc_id, scanout_state->plane->plane_id,
 			   pinfo ? pinfo->drm_format_name : "UNKNOWN");
 
-	if (drmModePageFlip(device->drm.fd, crtc->crtc_id,
+	if (drmModePageFlip(device->kms_device->fd, crtc->crtc_id,
 			    scanout_state->fb->fb_id,
 			    DRM_MODE_PAGE_FLIP_EVENT, output) < 0) {
 		weston_log("queueing pageflip failed: %s\n", strerror(errno));
@@ -963,7 +1121,7 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 			if (dpms_prop->prop_id == 0)
 				continue;
 
-			ret = drmModeConnectorSetProperty(device->drm.fd,
+			ret = drmModeConnectorSetProperty(device->kms_device->fd,
 						head->connector.connector_id,
 						dpms_prop->prop_id,
 						state->dpms);
@@ -979,23 +1137,22 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	return 0;
 
 err:
-	drm_output_set_cursor_view(output, NULL);
 	drm_output_state_free(state);
 	return -1;
 }
 
 static int
-crtc_add_prop(drmModeAtomicReq *req, struct drm_crtc *crtc,
+crtc_add_prop(drmModeAtomicReq *req, const struct drm_crtc *crtc,
 	      enum wdrm_crtc_property prop, uint64_t val)
 {
 	struct drm_device *device = crtc->device;
 	struct drm_backend *b = device->backend;
-	struct drm_property_info *info = &crtc->props_crtc[prop];
+	const struct drm_property_info *info = &crtc->props_crtc[prop];
 	int ret;
 
-	drm_debug(b, "\t\t\t[CRTC:%lu] %lu (%s) -> %llu (0x%llx)\n",
-		  (unsigned long) crtc->crtc_id,
-		  (unsigned long) info->prop_id, info->name,
+	drm_debug(b, "\t\t\t[CRTC:%lu] %s (%lu) -> %llu (0x%llx)\n",
+		  (unsigned long) crtc->crtc_id, info->name,
+		  (unsigned long) info->prop_id,
 		  (unsigned long long) val, (unsigned long long) val);
 
 	if (info->prop_id == 0)
@@ -1025,10 +1182,10 @@ crtc_add_prop(drmModeAtomicReq *req, struct drm_crtc *crtc,
  * like this and which do not.
  */
 static int
-crtc_add_prop_zero_ok(drmModeAtomicReq *req, struct drm_crtc *crtc,
+crtc_add_prop_zero_ok(drmModeAtomicReq *req, const struct drm_crtc *crtc,
 		      enum wdrm_crtc_property prop, uint64_t val)
 {
-	struct drm_property_info *info = &crtc->props_crtc[prop];
+	const struct drm_property_info *info = &crtc->props_crtc[prop];
 
 	if (info->prop_id == 0 && val == 0)
 		return 0;
@@ -1036,25 +1193,63 @@ crtc_add_prop_zero_ok(drmModeAtomicReq *req, struct drm_crtc *crtc,
 	return crtc_add_prop(req, crtc, prop, val);
 }
 
+bool
+drm_crtc_supports_background_color(struct drm_crtc *crtc)
+{
+	if (crtc->props_crtc[WDRM_CRTC_BACKGROUND_COLOR].prop_id != 0)
+		return true;
+
+	return false;
+}
+
 static int
-connector_add_prop(drmModeAtomicReq *req, struct drm_connector *connector,
+connector_add_prop(drmModeAtomicReq *req, const struct drm_connector *connector,
 		   enum wdrm_connector_property prop, uint64_t val)
 {
 	struct drm_device *device = connector->device;
 	struct drm_backend *b = device->backend;
-	struct drm_property_info *info = &connector->props[prop];
+	const struct drm_property_info *info = &connector->props[prop];
 	uint32_t connector_id = connector->connector_id;
 	int ret;
 
-	drm_debug(b, "\t\t\t[CONN:%lu] %lu (%s) -> %llu (0x%llx)\n",
-		  (unsigned long) connector_id,
-		  (unsigned long) info->prop_id, info->name,
+	drm_debug(b, "\t\t\t[CONN:%lu] %s (%lu) -> %llu (0x%llx)\n",
+		  (unsigned long) connector_id, info->name,
+		  (unsigned long) info->prop_id,
 		  (unsigned long long) val, (unsigned long long) val);
 
 	if (info->prop_id == 0)
 		return -1;
 
 	ret = drmModeAtomicAddProperty(req, connector_id, info->prop_id, val);
+	return (ret <= 0) ? -1 : 0;
+}
+
+static int
+connector_add_prop_enum(drmModeAtomicReq *req,
+			const struct drm_connector *connector,
+			enum wdrm_connector_property prop,
+			uint32_t wdrm_enum_value)
+{
+	struct drm_device *device = connector->device;
+	struct drm_backend *b = device->backend;
+	struct weston_compositor *comp = b->compositor;
+	const struct drm_property_info *info = &connector->props[prop];
+	const struct drm_property_enum_info *eni;
+	uint32_t connector_id = connector->connector_id;
+	int ret;
+
+	weston_assert_u32_lt(comp, wdrm_enum_value, info->num_enum_values);
+	eni = &info->enum_values[wdrm_enum_value];
+
+	drm_debug(b, "\t\t\t[CONN:%lu] %s (%lu) -> %s (0x%llx)\n",
+		  (unsigned long) connector_id, info->name,
+		  (unsigned long) info->prop_id,
+		  eni->name, (unsigned long long) eni->value);
+
+	if (info->prop_id == 0 || !eni->valid)
+		return -1;
+
+	ret = drmModeAtomicAddProperty(req, connector_id, info->prop_id, eni->value);
 	return (ret <= 0) ? -1 : 0;
 }
 
@@ -1067,9 +1262,9 @@ plane_add_prop(drmModeAtomicReq *req, struct drm_plane *plane,
 	struct drm_property_info *info = &plane->props[prop];
 	int ret;
 
-	drm_debug(b, "\t\t\t[PLANE:%lu] %lu (%s) -> %llu (0x%llx)\n",
-		  (unsigned long) plane->plane_id,
-		  (unsigned long) info->prop_id, info->name,
+	drm_debug(b, "\t\t\t[PLANE:%lu] %s (%lu) -> %llu (0x%llx)\n",
+		  (unsigned long) plane->plane_id, info->name,
+		  (unsigned long) info->prop_id,
 		  (unsigned long long) val, (unsigned long long) val);
 
 	if (info->prop_id == 0)
@@ -1077,6 +1272,82 @@ plane_add_prop(drmModeAtomicReq *req, struct drm_plane *plane,
 
 	ret = drmModeAtomicAddProperty(req, plane->plane_id, info->prop_id,
 				       val);
+	return (ret <= 0) ? -1 : 0;
+}
+
+static int
+plane_add_prop_enum(drmModeAtomicReq *req, const struct drm_plane *plane,
+		    enum wdrm_plane_property prop, uint32_t wdrm_enum_value)
+{
+	struct drm_device *device = plane->device;
+	struct drm_backend *b = device->backend;
+	struct weston_compositor *comp = b->compositor;
+	const struct drm_property_info *info = &plane->props[prop];
+	const struct drm_property_enum_info *eni;
+	int ret;
+
+	weston_assert_u32_lt(comp, wdrm_enum_value, info->num_enum_values);
+	eni = &info->enum_values[wdrm_enum_value];
+
+	drm_debug(b, "\t\t\t[PLANE:%lu] %s (%lu) -> %s (0x%llx)\n",
+		  (unsigned long) plane->plane_id, info->name,
+		  (unsigned long) info->prop_id,
+		  eni->name, (unsigned long long) eni->value);
+
+	if (info->prop_id == 0 || !eni->valid)
+		return -1;
+
+	ret = drmModeAtomicAddProperty(req, plane->plane_id, info->prop_id,
+				       eni->value);
+	return (ret <= 0) ? -1 : 0;
+}
+
+static int
+colorop_add_prop(drmModeAtomicReq *req, const struct drm_colorop *colorop,
+		 enum wdrm_colorop_property prop, uint64_t val)
+{
+	struct drm_plane *plane = colorop->pipeline->plane;
+	struct drm_device *device = plane->device;
+	struct drm_backend *b = device->backend;
+	const struct drm_property_info *info = &colorop->props[prop];
+	int ret;
+
+	drm_debug(b, "\t\t\t[COLOROP:%lu] %s (%lu) -> %llu (0x%llx)\n",
+		  (unsigned long) colorop->id, info->name,
+		  (unsigned long) info->prop_id,
+		  (unsigned long long) val, (unsigned long long) val);
+
+	if (info->prop_id == 0)
+		return -1;
+
+	ret = drmModeAtomicAddProperty(req, colorop->id, info->prop_id, val);
+	return (ret <= 0) ? -1 : 0;
+}
+
+static int
+colorop_add_prop_enum(drmModeAtomicReq *req, const struct drm_colorop *colorop,
+		      enum wdrm_colorop_property prop, uint32_t wdrm_enum_value)
+{
+	struct drm_plane *plane = colorop->pipeline->plane;
+	struct drm_device *device = plane->device;
+	struct drm_backend *b = device->backend;
+	struct weston_compositor *comp = b->compositor;
+	const struct drm_property_info *info = &colorop->props[prop];
+	const struct drm_property_enum_info *eni;
+	int ret;
+
+	weston_assert_u32_lt(comp, wdrm_enum_value, info->num_enum_values);
+	eni = &info->enum_values[wdrm_enum_value];
+
+	drm_debug(b, "\t\t\t[COLOROP:%lu] %s (%lu) -> %s (0x%llx)\n",
+		  (unsigned long) colorop->id, info->name,
+		  (unsigned long) info->prop_id,
+		  eni->name, (unsigned long long) eni->value);
+
+	if (info->prop_id == 0 || !eni->valid)
+		return -1;
+
+	ret = drmModeAtomicAddProperty(req, colorop->id, info->prop_id, eni->value);
 	return (ret <= 0) ? -1 : 0;
 }
 
@@ -1127,9 +1398,6 @@ drm_connector_set_hdcp_property(struct drm_connector *connector,
 	int ret;
 	enum wdrm_content_protection_state drm_protection;
 	enum wdrm_hdcp_content_type drm_cp_type;
-	struct drm_property_enum_info *enum_info;
-	uint64_t prop_val;
-	struct drm_property_info *props = connector->props;
 
 	get_drm_protection_from_weston(protection, &drm_protection,
 				       &drm_cp_type);
@@ -1146,19 +1414,17 @@ drm_connector_set_hdcp_property(struct drm_connector *connector,
 	    drm_cp_type != WDRM_HDCP_CONTENT_TYPE0)
 			return;
 
-	enum_info = props[WDRM_CONNECTOR_CONTENT_PROTECTION].enum_values;
-	prop_val = enum_info[drm_protection].value;
-	ret = connector_add_prop(req, connector,
-				 WDRM_CONNECTOR_CONTENT_PROTECTION, prop_val);
+	ret = connector_add_prop_enum(req, connector,
+				      WDRM_CONNECTOR_CONTENT_PROTECTION,
+				      drm_protection);
 	assert(ret == 0);
 
 	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_HDCP_CONTENT_TYPE))
 		return;
 
-	enum_info = props[WDRM_CONNECTOR_HDCP_CONTENT_TYPE].enum_values;
-	prop_val = enum_info[drm_cp_type].value;
-	ret = connector_add_prop(req, connector,
-				 WDRM_CONNECTOR_HDCP_CONTENT_TYPE, prop_val);
+	ret = connector_add_prop_enum(req, connector,
+				      WDRM_CONNECTOR_HDCP_CONTENT_TYPE,
+				      drm_cp_type);
 	assert(ret == 0);
 }
 
@@ -1201,17 +1467,12 @@ drm_connector_set_content_type(struct drm_connector *connector,
 			       enum wdrm_content_type content_type,
 			       drmModeAtomicReq *req)
 {
-	struct drm_property_enum_info *enum_info;
-	uint64_t prop_val;
-	struct drm_property_info *props = connector->props;
-
 	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_CONTENT_TYPE))
 		return 0;
 
-	enum_info = props[WDRM_CONNECTOR_CONTENT_TYPE].enum_values;
-	prop_val = enum_info[content_type].value;
-	return connector_add_prop(req, connector,
-				  WDRM_CONNECTOR_CONTENT_TYPE, prop_val);
+	return connector_add_prop_enum(req, connector,
+				       WDRM_CONNECTOR_CONTENT_TYPE,
+				       content_type);
 }
 
 static int
@@ -1219,12 +1480,6 @@ drm_connector_set_colorspace(struct drm_connector *connector,
 			     enum wdrm_colorspace colorspace,
 			     drmModeAtomicReq *req)
 {
-	const struct drm_property_info *info;
-	const struct drm_property_enum_info *enum_info;
-
-	assert(colorspace >= 0);
-	assert(colorspace < WDRM_COLORSPACE__COUNT);
-
 	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_COLORSPACE)) {
 		if (colorspace == WDRM_COLORSPACE_DEFAULT)
 			return 0;
@@ -1232,12 +1487,90 @@ drm_connector_set_colorspace(struct drm_connector *connector,
 		return -1;
 	}
 
-	info = &connector->props[WDRM_CONNECTOR_COLORSPACE];
-	enum_info = &info->enum_values[colorspace];
-	assert(enum_info->valid);
+	return connector_add_prop_enum(req, connector,
+				       WDRM_CONNECTOR_COLORSPACE,
+				       colorspace);
+}
 
-	return connector_add_prop(req, connector,
-				  WDRM_CONNECTOR_COLORSPACE, enum_info->value);
+static enum wdrm_underscan
+get_drm_underscan_from_weston_output(struct weston_output *woutput)
+{
+	switch (woutput->underscan) {
+	case WESTON_UNDERSCAN_OFF:
+		return WDRM_UNDERSCAN_OFF;
+	case WESTON_UNDERSCAN_ON:
+		return WDRM_UNDERSCAN_ON;
+	case WESTON_UNDERSCAN_AUTO:
+		return WDRM_UNDERSCAN_AUTO;
+	default:
+		weston_assert_not_reached(woutput->compositor,
+					  "unknown underscan type");
+	}
+
+	return WDRM_UNDERSCAN_OFF;
+}
+
+static int
+drm_connector_set_margins(struct drm_connector *connector,
+			  struct drm_output *output,
+			  drmModeAtomicReq *req)
+{
+	struct weston_output *woutput = &output->base;
+	uint32_t hborder = 0, vborder = 0;
+	int ret = 0;
+
+	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_LEFT_MARGIN) ||
+	    !drm_connector_has_prop(connector, WDRM_CONNECTOR_RIGHT_MARGIN) ||
+	    !drm_connector_has_prop(connector, WDRM_CONNECTOR_TOP_MARGIN) ||
+	    !drm_connector_has_prop(connector, WDRM_CONNECTOR_BOTTOM_MARGIN))
+		return -1;
+
+	/* We'll treat auto as on for margin properties. */
+	if (woutput->underscan != WESTON_UNDERSCAN_OFF) {
+		hborder = woutput->underscan_hborder;
+		vborder = woutput->underscan_vborder;
+	}
+
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_LEFT_MARGIN,
+				  hborder);
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_RIGHT_MARGIN,
+				  hborder);
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_TOP_MARGIN,
+				  vborder);
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_BOTTOM_MARGIN,
+				  vborder);
+	return ret;
+}
+
+static int
+drm_connector_set_underscan(struct drm_connector *connector,
+			    struct drm_output *output,
+			    drmModeAtomicReq *req)
+{
+	struct weston_output *woutput = &output->base;
+	enum wdrm_underscan underscan;
+	uint32_t hborder = 0, vborder = 0;
+	int ret = 0;
+
+	if (drm_connector_set_margins(connector, output, req) == 0)
+		return 0;
+
+	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_UNDERSCAN))
+		return 0;
+
+	underscan = get_drm_underscan_from_weston_output(woutput);
+	ret |= connector_add_prop_enum(req, connector,
+				       WDRM_CONNECTOR_UNDERSCAN, underscan);
+
+	if (woutput->underscan != WESTON_UNDERSCAN_OFF) {
+		hborder = woutput->underscan_hborder;
+		vborder = woutput->underscan_vborder;
+	}
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_UNDERSCAN_HBORDER,
+				  hborder);
+	ret |= connector_add_prop(req, connector, WDRM_CONNECTOR_UNDERSCAN_VBORDER,
+				  vborder);
+	return ret;
 }
 
 static int
@@ -1245,8 +1578,10 @@ drm_plane_set_color_encoding(struct drm_plane *plane,
 			     enum wdrm_plane_color_encoding color_encoding,
 			     drmModeAtomicReq *req)
 {
-	if (color_encoding == WDRM_PLANE_COLOR_ENCODING__COUNT)
-		return 0;
+	struct weston_compositor *wc = plane->base.compositor;
+
+	weston_assert_s32_ge(wc, color_encoding, 0);
+	weston_assert_s32_lt(wc, color_encoding, WDRM_PLANE_COLOR_ENCODING__COUNT);
 
 	if (plane->props[WDRM_PLANE_COLOR_ENCODING].prop_id == 0) {
 		if (color_encoding == WDRM_PLANE_COLOR_ENCODING_DEFAULT)
@@ -1255,10 +1590,36 @@ drm_plane_set_color_encoding(struct drm_plane *plane,
 		return -1;
 	}
 
-	assert(drm_plane_supports_color_encoding(plane, color_encoding));
+	weston_assert_true(wc, drm_plane_supports_color_encoding(plane, color_encoding));
 
-	return plane_add_prop(req, plane, WDRM_PLANE_COLOR_ENCODING,
-			      color_encoding);
+	return plane_add_prop_enum(req, plane, WDRM_PLANE_COLOR_ENCODING,
+				   color_encoding);
+}
+
+static int
+drm_connector_set_color_format(struct drm_connector *connector,
+			       enum wdrm_color_format color_format,
+			       drmModeAtomicReq *req)
+{
+	const struct drm_property_info *info;
+	const struct drm_property_enum_info *enum_info;
+
+	assert(color_format >= 0);
+	assert(color_format < WDRM_COLOR_FORMAT__COUNT);
+
+	if (!drm_connector_has_prop(connector, WDRM_CONNECTOR_COLOR_FORMAT)) {
+		if (color_format == WDRM_COLOR_FORMAT_AUTO)
+			return 0;
+
+		return -1;
+	}
+
+	info = &connector->props[WDRM_CONNECTOR_COLOR_FORMAT];
+	enum_info = &info->enum_values[color_format];
+	assert(enum_info->valid);
+
+	return connector_add_prop(req, connector, WDRM_CONNECTOR_COLOR_FORMAT,
+				  enum_info->value);
 }
 
 static int
@@ -1266,8 +1627,10 @@ drm_plane_set_color_range(struct drm_plane *plane,
 			  enum wdrm_plane_color_range color_range,
 			  drmModeAtomicReq *req)
 {
-	if (color_range == WDRM_PLANE_COLOR_RANGE__COUNT)
-		return 0;
+	struct weston_compositor *wc = plane->base.compositor;
+
+	weston_assert_s32_ge(wc, color_range, 0);
+	weston_assert_s32_lt(wc, color_range, WDRM_PLANE_COLOR_RANGE__COUNT);
 
 	if (plane->props[WDRM_PLANE_COLOR_RANGE].prop_id == 0) {
 		if (color_range == WDRM_PLANE_COLOR_RANGE_DEFAULT)
@@ -1276,9 +1639,173 @@ drm_plane_set_color_range(struct drm_plane *plane,
 		return -1;
 	}
 
-	assert(drm_plane_supports_color_range(plane, color_range));
+	weston_assert_true(wc, drm_plane_supports_color_range(plane, color_range));
 
-	return plane_add_prop(req, plane, WDRM_PLANE_COLOR_RANGE, color_range);
+	return plane_add_prop_enum(req, plane, WDRM_PLANE_COLOR_RANGE,
+				   color_range);
+}
+
+static int
+drm_plane_set_blend_mode(struct drm_plane *plane,
+			 enum wdrm_plane_blend blend_mode,
+			 drmModeAtomicReq *req)
+{
+	struct weston_compositor *wc = plane->base.compositor;
+
+	weston_assert_s32_ge(wc, blend_mode, 0);
+	weston_assert_s32_lt(wc, blend_mode, WDRM_PLANE_BLEND__COUNT);
+
+	if (plane->props[WDRM_PLANE_BLEND].prop_id == 0) {
+		if (blend_mode == WDRM_PLANE_BLEND_DEFAULT)
+			return 0;
+
+		return -1;
+	}
+
+	weston_assert_true(wc, drm_plane_supports_blend_mode(plane, blend_mode));
+
+	return plane_add_prop_enum(req, plane, WDRM_PLANE_BLEND, blend_mode);
+}
+
+static bool
+colorop_enforce(drmModeAtomicReq *req, const struct drm_colorop *colorop,
+		char **err_msg)
+{
+	int ret;
+
+	if (!colorop->can_bypass)
+		return true;
+
+	ret = colorop_add_prop(req, colorop, WDRM_COLOROP_BYPASS, 0);
+	if (ret == 0)
+		return true;
+
+	str_printf(err_msg, "failed to set colorop id %u bypass to false",
+			    colorop->id);
+	return false;
+}
+
+static bool
+drm_colorop_program(drmModeAtomicReq *req, struct drm_colorop_state *colorop_state,
+		    const char *indent, char **err_msg)
+{
+	const struct drm_colorop *colorop = colorop_state->colorop;
+	const struct drm_colorop_state_object *value = &colorop_state->object;
+	struct drm_color_pipeline *pipeline = colorop->pipeline;
+	struct drm_backend *b = pipeline->plane->device->backend;
+	int ret = -1;
+
+	if (!colorop_enforce(req, colorop, err_msg))
+		return false;
+
+	switch (value->type) {
+	case COLOROP_OBJECT_TYPE_CURVE:
+		ret = colorop_add_prop_enum(req, colorop,
+					    WDRM_COLOROP_CURVE_1D, value->curve);
+		break;
+	case COLOROP_OBJECT_TYPE_MATRIX:
+		ret = colorop_add_prop(req, colorop,
+				       WDRM_COLOROP_DATA, value->matrix_blob_id);
+		break;
+	case COLOROP_OBJECT_TYPE_3x1D_LUT:
+		if (colorop_add_prop_enum(req, colorop,
+					  WDRM_COLOROP_LUT1D_INTERPOLATION,
+					  WDRM_COLOROP_LUT1D_INTERPOLATION_LINEAR) < 0) {
+			drm_debug(b, "%s[colorop] linear LUT1D interpolation not supported or failed to set;\n"
+				     "%susing current value set on driver\n", indent, indent);
+		}
+		ret = colorop_add_prop(req, colorop,
+				       WDRM_COLOROP_DATA, value->lut_3x1d_blob_id);
+		break;
+	case COLOROP_OBJECT_TYPE_3D_LUT:
+		if (colorop_add_prop_enum(req, colorop,
+					  WDRM_COLOROP_LUT3D_INTERPOLATION,
+					  WDRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL) < 0) {
+			drm_debug(b, "%s[colorop] tetrahedral LUT3D interpolation not supported or failed to set;\n"
+				     "%susing current value set on driver\n", indent, indent);
+		}
+		ret = colorop_add_prop(req, colorop,
+				       WDRM_COLOROP_DATA, value->lut_3d_blob_id);
+		break;
+ 	case COLOROP_OBJECT_TYPE_MULTIPLIER:
+		ret = colorop_add_prop(req, colorop,
+				       WDRM_COLOROP_MULTIPLIER, value->multiplier);
+		break;
+	}
+
+	if (ret < 0) {
+		str_printf(err_msg, "failed to program colorop id %u type %s",
+				    colorop->id, drm_colorop_type_to_str(colorop));
+		return false;
+	}
+
+	return true;
+}
+
+static struct drm_colorop_state *
+drm_colorop_state_iter(struct drm_color_pipeline_state *pipeline_state,
+		       struct drm_colorop_state *iter)
+{
+	struct wl_list *list = &pipeline_state->colorop_state_list;
+	struct wl_list *node;
+
+	if (iter)
+		node = iter->link.next;
+	else
+		node = list->next;
+
+	if (node == list)
+		return NULL;
+
+	return container_of(node, struct drm_colorop_state, link);
+}
+
+static int
+drm_color_pipeline_program(drmModeAtomicReq *req,
+			   struct drm_color_pipeline_state *pipeline_state,
+			   const char *indent)
+{
+	const struct drm_color_pipeline *pipeline = pipeline_state->pipeline;
+	struct drm_plane *plane = pipeline->plane;
+	struct drm_backend *b = plane->device->backend;
+	struct drm_colorop_state *colorop_state;
+	struct drm_colorop *colorop;
+	char *err_msg;
+	int ret_drm;
+	bool ret;
+
+	colorop_state = drm_colorop_state_iter(pipeline_state,
+					       NULL /* previous colorop state (none) */);
+	wl_list_for_each(colorop, &pipeline->colorop_list, link) {
+		/* If a colorop is not in the colorop state list, bypass it. */
+		if (!colorop_state || colorop != colorop_state->colorop) {
+			weston_assert_true(b->compositor, colorop->can_bypass);
+
+			ret_drm = colorop_add_prop(req, colorop, WDRM_COLOROP_BYPASS, 1);
+			if (ret_drm >= 0)
+				continue;
+
+			drm_debug(b, "%s%s[colorop] failed to set colorop id %u bypass == true",
+				     indent, indent, colorop->id);
+			goto err;
+		}
+
+		ret = drm_colorop_program(req, colorop_state, indent, &err_msg);
+		if (!ret) {
+			drm_debug(b, "%s%s[colorop] %s\n", indent, indent, err_msg);
+			free(err_msg);
+			goto err;
+		}
+
+		colorop_state = drm_colorop_state_iter(pipeline_state, colorop_state);
+	}
+	weston_assert_ptr_null(b->compositor, colorop_state);
+
+	return plane_add_prop(req, plane, WDRM_PLANE_COLOR_PIPELINE, pipeline->id);
+
+err:
+	drm_debug(b, "%s%s[colorop] failed to program pipeline\n", indent, indent);
+	return -1;
 }
 
 static int
@@ -1297,6 +1824,7 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 	struct drm_writeback_state *wb_state = output->wb_state;
 	enum writeback_screenshot_state wb_screenshot_state =
 		drm_output_get_writeback_state(output);
+	const char *modifier_name;
 	int ret = 0;
 
 	drm_debug(b, "\t\t[atomic] %s output %lu (%s) state\n",
@@ -1334,6 +1862,10 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 		ret |= crtc_add_prop_zero_ok(req, crtc, WDRM_CRTC_CTM, 0);
 		ret |= crtc_add_prop_zero_ok(req, crtc, WDRM_CRTC_VRR_ENABLED,
 					     wdrm_vrr_enabled_from_output(output));
+
+		ret |= crtc_add_prop_zero_ok(req, crtc,
+					     WDRM_CRTC_BACKGROUND_COLOR,
+					     crtc->background_color);
 
 		/* No need for the DPMS property, since it is implicit in
 		 * routing and CRTC activity. */
@@ -1403,6 +1935,9 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 		ret |= drm_connector_set_max_bpc(&head->connector, output, req);
 		ret |= drm_connector_set_colorspace(&head->connector,
 						    output->connector_colorspace, req);
+		ret |= drm_connector_set_underscan(&head->connector, output, req);
+		ret |= drm_connector_set_color_format(&head->connector,
+						      output->connector_color_format, req);
 	}
 
 	if (ret != 0) {
@@ -1438,12 +1973,25 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 			ret |= plane_add_prop(req, plane, WDRM_PLANE_FB_DAMAGE_CLIPS,
 					      plane_state->damage_blob_id);
 
-		if (plane_state->fb && plane_state->fb->format)
-			pinfo = plane_state->fb->format;
+		if (plane->props[WDRM_PLANE_COLOR_PIPELINE].prop_id != 0) {
+			if (plane_state->pipeline_state) {
+				ret |= drm_color_pipeline_program(req, plane_state->pipeline_state,
+								  "\t\t\t");
+			} else {
+				ret |= plane_add_prop(req, plane,
+						      WDRM_PLANE_COLOR_PIPELINE, 0);
+			}
+		}
 
-		drm_debug(b, "\t\t\t[PLANE:%lu] FORMAT: %s\n",
+		modifier_name = "None";
+		if (plane_state->fb && plane_state->fb->format) {
+			pinfo = plane_state->fb->format;
+			modifier_name = plane_state->fb->modifier_name;
+		}
+		drm_debug(b, "\t\t\t[PLANE:%lu] FORMAT: %s MODIFIER: %s\n",
 			  (unsigned long) plane->plane_id,
-			  pinfo ? pinfo->drm_format_name : "UNKNOWN");
+			  pinfo ? pinfo->drm_format_name : "UNKNOWN",
+			  modifier_name);
 
 		if (plane_state->in_fence_fd >= 0) {
 			ret |= plane_add_prop(req, plane,
@@ -1467,6 +2015,10 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 			ret |= plane_add_prop(req, plane,
 					      WDRM_PLANE_ALPHA,
 					      plane_state->alpha);
+
+		ret |= drm_plane_set_blend_mode(plane,
+						plane_state->blend_mode,
+						req);
 
 		ret |= drm_plane_set_color_encoding(plane,
 						    plane_state->color_encoding,
@@ -1532,8 +2084,6 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 		struct weston_head *head_base;
 		struct drm_head *head;
 		struct drm_crtc *crtc;
-		uint32_t connector_id;
-		int err;
 
 		drm_debug(b, "\t\t[atomic] previous state invalid; "
 			     "starting with fresh state\n");
@@ -1543,7 +2093,6 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 		 * disable all the CRTCs and connectors we aren't using. */
 		wl_list_for_each(head_base,
 				 &b->compositor->head_list, compositor_link) {
-			struct drm_property_info *info;
 			head = to_drm_head(head_base);
 			if (!head)
 				continue;
@@ -1551,22 +2100,13 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 			if (weston_head_is_enabled(head_base))
 				continue;
 
-			connector_id = head->connector.connector_id;
 			if (head->connector.device != device)
 				continue;
 
 			drm_debug(b, "\t\t[atomic] disabling inactive head %s\n",
 				  head_base->name);
-
-			info = &head->connector.props[WDRM_CONNECTOR_CRTC_ID];
-			err = drmModeAtomicAddProperty(req, connector_id,
-						       info->prop_id, 0);
-			drm_debug(b, "\t\t\t[CONN:%lu] %lu (%s) -> 0\n",
-				  (unsigned long) connector_id,
-				  (unsigned long) info->prop_id,
-				  info->name);
-			if (err <= 0)
-				ret = -1;
+			ret |= connector_add_prop(req, &head->connector,
+						  WDRM_CONNECTOR_CRTC_ID, 0);
 		}
 
 		wl_list_for_each(crtc, &device->crtc_list, link) {
@@ -1582,7 +2122,7 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 			 * off, as the kernel will refuse to generate an event
 			 * for an off->off state and fail the commit.
 			 */
-			props = drmModeObjectGetProperties(device->drm.fd,
+			props = drmModeObjectGetProperties(device->kms_device->fd,
 							   crtc->crtc_id,
 							   DRM_MODE_OBJECT_CRTC);
 			if (!props) {
@@ -1618,6 +2158,11 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 	wl_list_for_each(output_state, &pending_state->output_list, link) {
 		if (output_state->output->is_virtual)
 			continue;
+
+		if (output_state->output->connector_color_format !=
+		    wdrm_color_format_from_output(&output_state->output->base))
+			weston_assert_true(b->compositor, output_state->output->base.enabled);
+
 		if (mode == DRM_STATE_APPLY_SYNC)
 			assert(output_state->dpms == WESTON_DPMS_OFF);
 		may_tear &= output_state->tear;
@@ -1634,7 +2179,7 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 	if (may_tear)
 		tear_flag = DRM_MODE_PAGE_FLIP_ASYNC;
 
-	ret = drmModeAtomicCommit(device->drm.fd, req, flags | tear_flag,
+	ret = drmModeAtomicCommit(device->kms_device->fd, req, flags | tear_flag,
 				  device);
 	drm_debug(b, "[atomic] drmModeAtomicCommit\n");
 	if (ret != 0 && may_tear && mode == DRM_STATE_TEST_ONLY) {
@@ -1643,7 +2188,7 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 		 * out of our state in case we were testing for a later commit.
 		 */
 		drm_debug(b, "[atomic] drmModeAtomicCommit (no tear fallback)\n");
-		ret = drmModeAtomicCommit(device->drm.fd, req, flags, device);
+		ret = drmModeAtomicCommit(device->kms_device->fd, req, flags, device);
 		if (ret == 0)
 			drm_pending_state_clear_tearing(pending_state);
 	}
@@ -1748,7 +2293,7 @@ drm_pending_state_apply(struct drm_pending_state *pending_state)
 		wl_list_for_each(crtc, &device->crtc_list, link) {
 			if (crtc->output)
 				continue;
-			drmModeSetCrtc(device->drm.fd, crtc->crtc_id, 0, 0, 0,
+			drmModeSetCrtc(device->kms_device->fd, crtc->crtc_id, 0, 0, 0,
 				       NULL, 0, NULL);
 		}
 	}
@@ -1825,7 +2370,7 @@ drm_pending_state_apply_sync(struct drm_pending_state *pending_state)
 		wl_list_for_each(crtc, &device->crtc_list, link) {
 			if (crtc->output)
 				continue;
-			drmModeSetCrtc(device->drm.fd, crtc->crtc_id, 0, 0, 0,
+			drmModeSetCrtc(device->kms_device->fd, crtc->crtc_id, 0, 0, 0,
 				       NULL, 0, NULL);
 		}
 	}
@@ -1983,7 +2528,7 @@ on_drm_input(int fd, uint32_t mask, void *data)
 	 * uses the KMS objects (CRTC, planes, etc) in use by the writeback. */
 	wl_list_for_each(crtc, &device->crtc_list, link) {
 		state = crtc->output ? crtc->output->wb_state : NULL;
-		if (state && drm_writeback_should_wait_completion(state))
+		if (state && !drm_writeback_try_complete(state))
 			wait_wb_completion = true;
 	}
 	if (wait_wb_completion)
@@ -2007,9 +2552,9 @@ init_kms_caps(struct drm_device *device)
 	uint64_t cap;
 	int ret;
 
-	weston_log("using %s\n", device->drm.filename);
+	weston_log("using %s\n", device->kms_device->filename);
 
-	ret = drmGetCap(device->drm.fd, DRM_CAP_TIMESTAMP_MONOTONIC, &cap);
+	ret = drmGetCap(device->kms_device->fd, DRM_CAP_TIMESTAMP_MONOTONIC, &cap);
 	if (ret != 0 || cap != 1) {
 		weston_log("Error: kernel DRM KMS does not support DRM_CAP_TIMESTAMP_MONOTONIC.\n");
 		return -1;
@@ -2017,25 +2562,25 @@ init_kms_caps(struct drm_device *device)
 
 	b->base.supported_presentation_clocks = 1 << CLOCK_MONOTONIC;
 
-	ret = drmGetCap(device->drm.fd, DRM_CAP_CURSOR_WIDTH, &cap);
+	ret = drmGetCap(device->kms_device->fd, DRM_CAP_CURSOR_WIDTH, &cap);
 	if (ret == 0)
 		device->cursor_width = cap;
 	else
 		device->cursor_width = 64;
 
-	ret = drmGetCap(device->drm.fd, DRM_CAP_CURSOR_HEIGHT, &cap);
+	ret = drmGetCap(device->kms_device->fd, DRM_CAP_CURSOR_HEIGHT, &cap);
 	if (ret == 0)
 		device->cursor_height = cap;
 	else
 		device->cursor_height = 64;
 
-	ret = drmSetClientCap(device->drm.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+	ret = drmSetClientCap(device->kms_device->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 	if (ret) {
 		weston_log("Error: drm card doesn't support universal planes!\n");
 		return -1;
 	}
 
-	ret = drmGetCap(device->drm.fd, DRM_CAP_CRTC_IN_VBLANK_EVENT, &cap);
+	ret = drmGetCap(device->kms_device->fd, DRM_CAP_CRTC_IN_VBLANK_EVENT, &cap);
 	if (ret != 0)
 		cap = 0;
 
@@ -2058,23 +2603,39 @@ init_kms_caps(struct drm_device *device)
 	}
 
 	if (!getenv("WESTON_DISABLE_ATOMIC")) {
-		ret = drmSetClientCap(device->drm.fd, DRM_CLIENT_CAP_ATOMIC, 1);
+		ret = drmSetClientCap(device->kms_device->fd, DRM_CLIENT_CAP_ATOMIC, 1);
 		device->atomic_modeset = ((ret == 0) && (cap == 1));
 	}
 	weston_log("DRM: %s atomic modesetting\n",
 		   device->atomic_modeset ? "supports" : "does not support");
 
+	if (!device->atomic_modeset) {
+#ifdef ALLOW_DEPRECATED_MODESET
+		weston_log("DRM Warning: Non-atomic modeset support is deprecated and will be removed.\n");
+#else
+		weston_log("Error: Kernel DRM KMS does not support DRM_CLIENT_CAP_ATOMIC.\n");
+		return -1;
+#endif
+	}
+
 	if (!getenv("WESTON_DISABLE_GBM_MODIFIERS")) {
-		ret = drmGetCap(device->drm.fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
+		ret = drmGetCap(device->kms_device->fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
 		if (ret == 0)
 			device->fb_modifiers = cap;
 	}
 	weston_log("DRM: %s GBM modifiers\n",
 		   device->fb_modifiers ? "supports" : "does not support");
 
-	drmSetClientCap(device->drm.fd, DRM_CLIENT_CAP_WRITEBACK_CONNECTORS, 1);
+	drmSetClientCap(device->kms_device->fd, DRM_CLIENT_CAP_WRITEBACK_CONNECTORS, 1);
 
-	ret = drmGetCap(device->drm.fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap);
+#ifdef DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE
+	ret = drmSetClientCap(device->kms_device->fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1);
+	device->color_pipeline_supported = (ret == 0);
+#else
+	device->color_pipeline_supported = false;
+#endif
+
+	ret = drmGetCap(device->kms_device->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap);
 	if (ret == 0)
 		device->tearing_supported = cap;
 	weston_log("DRM: %s Atomic async page flip\n",
@@ -2089,9 +2650,9 @@ init_kms_caps(struct drm_device *device)
 	 * enabled.
 	 */
 	if (!device->atomic_modeset || getenv("WESTON_FORCE_RENDERER"))
-		device->sprites_are_broken = true;
+		device->disable_client_buffer_scanout = true;
 
-	ret = drmSetClientCap(device->drm.fd, DRM_CLIENT_CAP_ASPECT_RATIO, 1);
+	ret = drmSetClientCap(device->kms_device->fd, DRM_CLIENT_CAP_ASPECT_RATIO, 1);
 	device->aspect_ratio_supported = (ret == 0);
 	weston_log("DRM: %s picture aspect ratio\n",
 		   device->aspect_ratio_supported ? "supports" : "does not support");

@@ -102,7 +102,7 @@ get_wm_name(struct window_x11 *window)
 				       XCB_ATOM_WINDOW, 0, 1024);
 	reply = xcb_get_property_reply(conn, prop_cookie, &error);
 	test_assert_ptr_not_null(reply);
-	test_assert_enum(reply->type, XCB_ATOM_WINDOW);
+	test_assert_enum_eq(reply->type, XCB_ATOM_WINDOW);
 	test_assert_u8_eq(reply->format, 32);
 
 	xcb_window_t wm_id = *(xcb_window_t *) xcb_get_property_value(reply);
@@ -113,7 +113,8 @@ get_wm_name(struct window_x11 *window)
 	return wm_name;
 }
 
-TEST(xwayland_client_test)
+static enum test_result_code
+xwayland_client_test(struct wet_testsuite_data *suite_data)
 {
 	struct window_x11 *window;
 	struct connection_x11 *conn;
@@ -181,3 +182,7 @@ TEST(xwayland_client_test)
 
 	return RESULT_OK;
 }
+
+DECLARE_TEST_LIST(
+	TESTFN(xwayland_client_test),
+);

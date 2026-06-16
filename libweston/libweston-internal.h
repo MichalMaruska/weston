@@ -32,9 +32,8 @@
  * This is the internal (private) part of libweston. All symbols found here
  * are, and should be only (with a few exceptions) used within the internal
  * parts of libweston.  Notable exception(s) include a few files in tests/ that
- * need access to these functions, screen-share file from compositor/ and those
- * remoting/. Those will require some further fixing as to avoid including this
- * private header.
+ * need access to these functions, and those remoting/. Those will require some
+ * further fixing as to avoid including this private header.
  *
  * Eventually, these symbols should reside naturally into their own scope. New
  * features should either provide their own (internal) header or use this one.
@@ -84,10 +83,6 @@ enum weston_renderer_border_side {
 };
 
 struct weston_renderer {
-	int (*read_pixels)(struct weston_output *output,
-			   const struct pixel_format_info *format, void *pixels,
-			   uint32_t x, uint32_t y,
-			   uint32_t width, uint32_t height);
 	void (*repaint_output)(struct weston_output *output,
 			       pixman_region32_t *output_damage,
 			       weston_renderbuffer_t renderbuffer);
@@ -206,6 +201,14 @@ struct weston_renderer {
 					uint32_t format,
 					const uint64_t *modifiers, unsigned int count);
 
+	/** Checks if renderer is able to produce fb's with straight alpha
+	 * encoding (i.e. not pre-multiplied by alpha).
+	 *
+	 * \param wc The Weston compositor instance.
+	 * \return True if renderer is capable, false otherwise.
+	 */
+	bool (*can_render_straight_alpha)(struct weston_compositor *wc);
+
 	enum weston_renderer_type type;
 	const struct gl_renderer_interface *gl;
 	const struct vulkan_renderer_interface *vulkan;
@@ -248,6 +251,18 @@ struct weston_renderer {
 struct weston_tearing_control {
 	struct weston_surface *surface;
 	bool may_tear;
+};
+
+/** A client tracker
+ *
+ * This life time is tied to the wl_client.
+ */
+struct weston_client {
+	struct wl_listener wl_client_destroy_listener;
+	uint64_t internal_id;
+	char *internal_name;
+
+	uint64_t internal_id_counter;
 };
 
 bool
@@ -317,8 +332,8 @@ weston_compositor_dmabuf_can_scanout(struct weston_compositor *compositor,
 void
 weston_compositor_offscreen(struct weston_compositor *compositor);
 
-char *
-weston_compositor_print_scene_graph(struct weston_compositor *ec);
+void
+weston_compositor_print_scene_graph(struct weston_compositor *ec, FILE *fp);
 
 void
 weston_compositor_read_presentation_clock(
@@ -334,7 +349,7 @@ int
 weston_compositor_run_axis_binding(struct weston_compositor *compositor,
 				   struct weston_pointer *pointer,
 				   const struct timespec *time,
-				   struct weston_pointer_axis_event *event);
+				   const struct weston_pointer_axis_event *event);
 void
 weston_compositor_run_button_binding(struct weston_compositor *compositor,
 				     struct weston_pointer *pointer,
@@ -367,10 +382,6 @@ void
 weston_compositor_run_tablet_tool_binding(struct weston_compositor *compositor,
 					  struct weston_tablet_tool *tool,
 					  uint32_t button, uint32_t state_w);
-void
-weston_compositor_stack_plane(struct weston_compositor *ec,
-			      struct weston_plane *plane,
-			      struct weston_plane *above);
 void
 weston_compositor_set_touch_mode_normal(struct weston_compositor *compositor);
 
@@ -477,7 +488,8 @@ struct weston_touch_device *
 weston_touch_create_touch_device(struct weston_touch *touch,
 				 const char *syspath,
 				 void *backend_data,
-				 const struct weston_touch_device_ops *ops);
+				 const struct weston_touch_device_ops *ops,
+				 weston_touch_device_set_output_func_t set_output);
 
 void
 weston_touch_device_destroy(struct weston_touch_device *device);
@@ -495,7 +507,7 @@ weston_touch_start_drag(struct weston_touch *touch,
 /* weston_touch_device */
 
 bool
-weston_touch_device_can_calibrate(struct weston_touch_device *device);
+weston_touch_device_can_calibrate(const struct weston_touch_device *device);
 
 /* weston_tablet */
 
@@ -542,7 +554,7 @@ bool
 weston_view_is_opaque(struct weston_view *ev, pixman_region32_t *region);
 
 bool
-weston_view_has_valid_buffer(struct weston_view *ev);
+weston_paint_node_has_valid_buffer(struct weston_paint_node *pnode);
 
 bool
 weston_view_takes_input_at_point(struct weston_view *view,
@@ -675,6 +687,8 @@ enum try_view_on_plane_failure_reasons {
  * A generic data structure unique for surface-view-output combination.
  */
 struct weston_paint_node {
+	struct weston_trace_flow flow; /* Perfetto flow */
+
 	/* Immutable members: */
 
 	/* struct weston_surface::paint_node_list */
@@ -684,10 +698,13 @@ struct weston_paint_node {
 	/* struct weston_view::paint_node_list */
 	struct wl_list view_link;
 	struct weston_view *view;
+	struct weston_matrix *view_transform_matrix;
 
 	/* struct weston_output::paint_node_list */
 	struct wl_list output_link;
 	struct weston_output *output;
+
+	char *internal_name;
 
 	/* Mutable members: */
 
@@ -696,8 +713,24 @@ struct weston_paint_node {
 	struct weston_matrix output_to_buffer_matrix;
 	bool needs_filtering;
 
-	bool valid_transform;
+	/* We consider a transform to be simple if it can be
+	 * represented by one of wayland's named transforms,
+	 * plus translation and scale.
+	 *
+	 * An axis aligned box must remain axis aligned.
+	 */
+	bool simple_transform;
+	/* Only valid if the transform is considered simple. */
 	enum wl_output_transform transform;
+	/* The paint node's output destination rectangle, only valid if simple_transform
+	 * is true */
+	struct weston_geometry output_dest;
+	/* The paint node's buffer source rectangle, only valid if simple_transform
+	 * is true */
+	float buffer_source_x;
+	float buffer_source_y;
+	float buffer_source_width;
+	float buffer_source_height;
 
 	/* struct weston_output::paint_node_z_order_list */
 	struct wl_list z_order_link;
@@ -715,6 +748,10 @@ struct weston_paint_node {
 	uint32_t try_view_on_plane_failure_reasons;
 	bool is_fully_opaque;
 	bool is_fully_blended;
+	bool on_cursor_layer;
+
+	/* Combined alpha from view and surface. */
+	float alpha;
 
 	/* This node's contents are solid, either from a solid buffer or a
 	 * placeholder.
@@ -887,5 +924,9 @@ weston_backend_set_deferred(struct weston_backend *backend);
 void
 weston_backend_clear_deferred(struct weston_backend *backend,
                               struct weston_compositor *compositor);
+
+struct weston_coord_surface __attribute__ ((warn_unused_result))
+weston_coord_global_to_surface_for_paint_node(const struct weston_paint_node *pnode,
+					      struct weston_coord_global coord);
 
 #endif

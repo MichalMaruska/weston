@@ -1677,6 +1677,7 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 	bool want_frame = false;
 	double x, y;
 	struct weston_coord_global pos;
+	struct weston_pointer_motion_event event;
 	struct timespec ts;
 
 	if (!input->output)
@@ -1717,7 +1718,11 @@ input_handle_motion(void *data, struct wl_pointer *pointer,
 
 	if (location == THEME_LOCATION_CLIENT_AREA) {
 		timespec_from_msec(&ts, time);
-		notify_motion_absolute(&input->base, &ts, pos);
+
+		weston_pointer_motion_event_init(&event, &ts, &input->base,
+						 WESTON_POINTER_MOTION_ABS,
+						 &pos, NULL, NULL);
+		notify_motion(&event);
 		want_frame = true;
 	}
 
@@ -1733,6 +1738,7 @@ input_handle_button(void *data, struct wl_pointer *pointer,
 	struct wayland_input *input = data;
 	enum theme_location location;
 	struct timespec ts;
+	struct weston_pointer_button_event button_event;
 
 	if (!input->output)
 		return;
@@ -1776,7 +1782,11 @@ input_handle_button(void *data, struct wl_pointer *pointer,
 
 	if (location == THEME_LOCATION_CLIENT_AREA) {
 		timespec_from_msec(&ts, time);
-		notify_button(&input->base, &ts, button, state);
+
+		weston_pointer_button_event_init(&button_event, &ts,
+						 &input->base, button, state);
+		notify_button(&button_event);
+
 		if (input->seat_version < WL_POINTER_FRAME_SINCE_VERSION)
 			notify_pointer_frame(&input->base);
 	}
@@ -1789,26 +1799,27 @@ input_handle_axis(void *data, struct wl_pointer *pointer,
 	struct wayland_input *input = data;
 	struct weston_pointer_axis_event weston_event;
 	struct timespec ts;
-
-	weston_event.axis = axis;
-	weston_event.value = wl_fixed_to_double(value);
-	weston_event.has_discrete = false;
+	bool has_discrete = false;
+	int32_t discrete = 0;
 
 	if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL &&
 	    input->vert.has_discrete) {
-		weston_event.has_discrete = true;
-		weston_event.discrete = input->vert.discrete;
+		has_discrete = true;
+		discrete = input->vert.discrete;
 		input->vert.has_discrete = false;
 	} else if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL &&
 		   input->horiz.has_discrete) {
-		weston_event.has_discrete = true;
-		weston_event.discrete = input->horiz.discrete;
+		has_discrete = true;
+		discrete = input->horiz.discrete;
 		input->horiz.has_discrete = false;
 	}
 
 	timespec_from_msec(&ts, time);
 
-	notify_axis(&input->base, &ts, &weston_event);
+	weston_pointer_axis_event_init(&weston_event, &ts, &input->base,
+				       axis, wl_fixed_to_double(value),
+				       has_discrete, discrete);
+	notify_axis(&weston_event);
 
 	if (input->seat_version < WL_POINTER_FRAME_SINCE_VERSION)
 		notify_pointer_frame(&input->base);
@@ -1839,12 +1850,11 @@ input_handle_axis_stop(void *data, struct wl_pointer *pointer,
 	struct weston_pointer_axis_event weston_event;
 	struct timespec ts;
 
-	weston_event.axis = axis;
-	weston_event.value = 0;
-
 	timespec_from_msec(&ts, time);
 
-	notify_axis(&input->base, &ts, &weston_event);
+	weston_pointer_axis_event_init(&weston_event, &ts, &input->base,
+				       axis, 0, false, 0);
+	notify_axis(&weston_event);
 }
 
 static void
@@ -2004,6 +2014,7 @@ input_handle_key(void *data, struct wl_keyboard *keyboard,
 {
 	struct wayland_input *input = data;
 	struct timespec ts;
+	struct weston_key_event key_event;
 
 	if (!input->keyboard_focus)
 		return;
@@ -2011,10 +2022,11 @@ input_handle_key(void *data, struct wl_keyboard *keyboard,
 	timespec_from_msec(&ts, time);
 
 	input->key_serial = serial;
-	notify_key(&input->base, &ts, key,
-		   state ? WL_KEYBOARD_KEY_STATE_PRESSED :
-			   WL_KEYBOARD_KEY_STATE_RELEASED,
-		   input->keyboard_state_update);
+
+	weston_key_event_init(&key_event, &ts, &input->base,
+			      key, state ? WL_KEYBOARD_KEY_STATE_PRESSED :
+			      WL_KEYBOARD_KEY_STATE_RELEASED, input->keyboard_state_update);
+	notify_key(&key_event);
 }
 
 static void
@@ -2077,6 +2089,7 @@ input_handle_touch_down(void *data, struct wl_touch *wl_touch,
 	struct weston_coord_global pos;
 	double x, y;
 	struct timespec ts;
+	struct weston_touch_event event;
 
 	x = wl_fixed_to_double(fixed_x);
 	y = wl_fixed_to_double(fixed_y);
@@ -2117,7 +2130,9 @@ input_handle_touch_down(void *data, struct wl_touch *wl_touch,
 
 	pos = weston_coord_global_from_output_point(x,y, &output->base);
 
-	notify_touch(input->touch_device, &ts, id, &pos, WL_TOUCH_DOWN);
+	weston_touch_event_init(&event, &ts, &input->base, input->touch_device,
+				WL_TOUCH_DOWN, id, &pos);
+	notify_touch(&event);
 	input->touch_active = true;
 }
 
@@ -2129,6 +2144,7 @@ input_handle_touch_up(void *data, struct wl_touch *wl_touch,
 	struct wayland_output *output = input->touch_focus;
 	bool active = input->touch_active;
 	struct timespec ts;
+	struct weston_touch_event event;
 
 	timespec_from_msec(&ts, time);
 
@@ -2153,8 +2169,11 @@ input_handle_touch_up(void *data, struct wl_touch *wl_touch,
 			weston_output_schedule_repaint(&output->base);
 	}
 
+	weston_touch_event_init(&event, &ts, &input->base, input->touch_device,
+				WL_TOUCH_UP, id, NULL);
+
 	if (active)
-		notify_touch(input->touch_device, &ts, id, NULL, WL_TOUCH_UP);
+		notify_touch(&event);
 }
 
 static void
@@ -2168,6 +2187,7 @@ input_handle_touch_motion(void *data, struct wl_touch *wl_touch,
 	double x, y;
 	struct weston_coord_global pos;
 	struct timespec ts;
+	struct weston_touch_event event;
 
 	x = wl_fixed_to_double(fixed_x);
 	y = wl_fixed_to_double(fixed_y);
@@ -2183,8 +2203,9 @@ input_handle_touch_motion(void *data, struct wl_touch *wl_touch,
 	}
 
 	pos = weston_coord_global_from_output_point(x, y, &output->base);
-
-	notify_touch(input->touch_device, &ts, id, &pos, WL_TOUCH_MOTION);
+	weston_touch_event_init(&event, &ts, &input->base, input->touch_device,
+				WL_TOUCH_MOTION, id, &pos);
+	notify_touch(&event);
 }
 
 static void
@@ -2234,7 +2255,7 @@ create_touch_device(struct wayland_input *input)
 		 wl_proxy_get_id((struct wl_proxy *)input->parent.seat));
 
 	touch_device = weston_touch_create_touch_device(input->base.touch_state,
-							str, NULL, NULL);
+							str, NULL, NULL, NULL);
 
 	return touch_device;
 }

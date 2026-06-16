@@ -261,7 +261,7 @@ struct vs_ubo {
 
 struct fs_ubo {
 	float unicolor[4];
-	float view_alpha;
+	float paint_node_alpha;
 };
 
 struct dmabuf_allocator {
@@ -406,34 +406,11 @@ static const struct vulkan_extension_table vulkan_device_ext_table[] = {
 };
 
 static void
-transfer_image_queue_family(VkCommandBuffer cmd_buffer, VkImage image,
-			    uint32_t src_index, uint32_t dst_index)
-{
-	const VkImageMemoryBarrier barrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-		.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-		.srcAccessMask = 0,
-		.dstAccessMask = 0,
-		.image = image,
-		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.subresourceRange.layerCount = 1,
-		.subresourceRange.levelCount = 1,
-		.srcQueueFamilyIndex = src_index,
-		.dstQueueFamilyIndex = dst_index,
-	};
-
-	vkCmdPipelineBarrier(cmd_buffer,
-			     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			     0, 0, NULL, 0, NULL, 1, &barrier);
-}
-
-static void
 transition_image_layout(VkCommandBuffer cmd_buffer, VkImage image,
 			VkImageLayout old_layout, VkImageLayout new_layout,
 			VkPipelineStageFlags srcs, VkPipelineStageFlags dsts,
-			VkAccessFlags src_access, VkAccessFlags dst_access)
+			VkAccessFlags src_access, VkAccessFlags dst_access,
+			uint32_t src_index, uint32_t dst_index)
 {
 	const VkImageMemoryBarrier barrier = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -445,8 +422,8 @@ transition_image_layout(VkCommandBuffer cmd_buffer, VkImage image,
 		.subresourceRange.levelCount = 1,
 		.srcAccessMask = src_access,
 		.dstAccessMask = dst_access,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.srcQueueFamilyIndex = src_index,
+		.dstQueueFamilyIndex = dst_index,
 	};
 
 	vkCmdPipelineBarrier(cmd_buffer, srcs, dsts, 0, 0, NULL, 0, NULL, 1, &barrier);
@@ -770,16 +747,11 @@ vulkan_renderer_dmabuf_alloc(struct weston_renderer *renderer,
 	struct dmabuf_attributes *attributes;
 	struct gbm_bo *bo;
 	int i;
-#ifdef HAVE_GBM_BO_CREATE_WITH_MODIFIERS2
+
 	bo = gbm_bo_create_with_modifiers2(allocator->gbm_device,
 					   width, height, format,
 					   modifiers, count,
 					   GBM_BO_USE_RENDERING);
-#else
-	bo = gbm_bo_create_with_modifiers(allocator->gbm_device,
-					  width, height, format,
-					  modifiers, count);
-#endif
 	if (!bo)
 		bo = gbm_bo_create(allocator->gbm_device,
 				   width, height, format,
@@ -1354,8 +1326,9 @@ vulkan_renderer_do_read_pixels(struct vulkan_renderer *vr,
 
 	transition_image_layout(cmd_buffer, color_attachment,
 				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0, VK_ACCESS_TRANSFER_WRITE_BIT);
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	copy_sub_image_to_buffer(cmd_buffer,
 				 dst_buffer, color_attachment,
@@ -1367,8 +1340,9 @@ vulkan_renderer_do_read_pixels(struct vulkan_renderer *vr,
 
 	transition_image_layout(cmd_buffer, color_attachment,
 				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0, VK_ACCESS_TRANSFER_WRITE_BIT);
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	// TODO: async implementation of this, remove wait
 	vulkan_renderer_cmd_end_wait(vr, &cmd_buffer);
@@ -1523,10 +1497,10 @@ vulkan_pipeline_config_init_for_paint_node(struct vulkan_pipeline_config *pconf,
 			.renderpass = vo->renderpass,
 			.green_tint = (vr->debug_mode == DEBUG_MODE_FRAGMENT),
 		},
-		.projection = pnode->view->transform.matrix,
+		.projection = *pnode->view_transform_matrix,
 		.surface_to_buffer =
-			pnode->view->surface->surface_to_buffer_matrix,
-		.view_alpha = pnode->view->alpha,
+			pnode->surface->surface_to_buffer_matrix,
+		.paint_node_alpha = pnode->alpha,
 	};
 
 	weston_matrix_multiply(&pconf->projection, &vo->output_matrix);
@@ -1573,7 +1547,7 @@ rect_to_quad(pixman_box32_t *rect,
 		polygon[i].y = (float)rect_s.y;
 	}
 
-	clipper_quad_init(quad, polygon, pnode->valid_transform);
+	clipper_quad_init(quad, polygon, pnode->simple_transform);
 }
 
 static uint32_t
@@ -1674,8 +1648,8 @@ repaint_region(struct vulkan_renderer *vr,
 	       pconf->surface_to_buffer.M.colmaj, sizeof(pconf->surface_to_buffer.M.colmaj));
 	memcpy(vb->fs_ubo_map + offsetof(struct fs_ubo, unicolor),
 	       pconf->unicolor, sizeof(pconf->unicolor));
-	memcpy(vb->fs_ubo_map + offsetof(struct fs_ubo, view_alpha),
-	       &pconf->view_alpha, sizeof(pconf->view_alpha));
+	memcpy(vb->fs_ubo_map + offsetof(struct fs_ubo, paint_node_alpha),
+	       &pconf->paint_node_alpha, sizeof(pconf->paint_node_alpha));
 
 	vkCmdBindDescriptorSets(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
 				pipeline->pipeline_layout, 0, 1, &vb->descriptor_set, 0, NULL);
@@ -1842,7 +1816,7 @@ draw_paint_node(struct weston_paint_node *pnode,
 		if (alt.req.variant == PIPELINE_VARIANT_RGBA)
 			alt.req.variant = PIPELINE_VARIANT_RGBX;
 
-		alt.req.blend = (pnode->view->alpha < 1.0);
+		alt.req.blend = (pnode->alpha < 1.0);
 
 		repaint_region(vr, pnode, &repaint, &surface_opaque, &alt, fr);
 		vs->used_in_output_repaint = true;
@@ -2104,8 +2078,8 @@ draw_output_border_texture(struct vulkan_renderer *vr,
 	       0, sizeof(pconf->surface_to_buffer.M.colmaj));
 	memcpy(border->fs_ubo_map + offsetof(struct fs_ubo, unicolor),
 	       pconf->unicolor, sizeof(pconf->unicolor));
-	memcpy(border->fs_ubo_map + offsetof(struct fs_ubo, view_alpha),
-	       &pconf->view_alpha, sizeof(pconf->view_alpha));
+	memcpy(border->fs_ubo_map + offsetof(struct fs_ubo, paint_node_alpha),
+	       &pconf->paint_node_alpha, sizeof(pconf->paint_node_alpha));
 
 	vkCmdBindDescriptorSets(cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
 				pipeline->pipeline_layout, 0, 1, &border->descriptor_set, 0, NULL);
@@ -2139,7 +2113,7 @@ draw_output_borders(struct weston_output *output,
 			.input_is_premult = true,
 			.green_tint = (vr->debug_mode == DEBUG_MODE_FRAGMENT),
 		},
-		.view_alpha = 1.0f,
+		.paint_node_alpha = 1.0f,
 	};
 
 	if (border_status == BORDER_STATUS_CLEAN)
@@ -2379,8 +2353,9 @@ vulkan_renderer_create_swapchain(struct weston_output *output,
 
 		transition_image_layout(cmd_buffer, swapchain_images[i],
 					VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-					VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-					0, VK_ACCESS_TRANSFER_WRITE_BIT);
+					VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+					0, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+					VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 		create_image_semaphores(vr, vo, im);
 
@@ -2439,7 +2414,7 @@ vulkan_renderer_repaint_output(struct weston_output *output,
 				 z_order_link) {
 		if (pnode->plane == &output->primary_plane) {
 			struct vulkan_surface_state *vs =
-				get_surface_state(pnode->view->surface);
+				get_surface_state(pnode->surface);
 			vs->used_in_output_repaint = false;
 		}
 	}
@@ -2494,9 +2469,11 @@ vulkan_renderer_repaint_output(struct weston_output *output,
 	if (rb->dmabuf) {
 		// Transfer ownership of the dmabuf to Vulkan
 		assert(vulkan_device_has(vr, EXTENSION_EXT_QUEUE_FAMILY_FOREIGN));
-		transfer_image_queue_family(cmd_buffer, im->image,
-					    VK_QUEUE_FAMILY_FOREIGN_EXT,
-					    vr->queue_family);
+		transition_image_layout(cmd_buffer, im->image,
+					VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+					VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+					VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+					VK_QUEUE_FAMILY_FOREIGN_EXT, vr->queue_family);
 	}
 
 	const struct weston_size *fb = &vo->fb_size;
@@ -2537,9 +2514,11 @@ vulkan_renderer_repaint_output(struct weston_output *output,
 	if (rb->dmabuf) {
 		// Transfer ownership of the dmabuf to DRM
 		assert(vulkan_device_has(vr, EXTENSION_EXT_QUEUE_FAMILY_FOREIGN));
-		transfer_image_queue_family(cmd_buffer, im->image,
-					    vr->queue_family,
-					    VK_QUEUE_FAMILY_FOREIGN_EXT);
+		transition_image_layout(cmd_buffer, im->image,
+					VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+					VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+					VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT,
+					vr->queue_family, VK_QUEUE_FAMILY_FOREIGN_EXT);
 	}
 
 	result = vkEndCommandBuffer(cmd_buffer);
@@ -2754,8 +2733,9 @@ update_texture_image(struct vulkan_renderer *vr,
 
 	transition_image_layout(cmd_buffer, texture->image,
 				expected_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	copy_buffer_to_sub_image(cmd_buffer, texture->staging_buffer, texture->image,
 				 buffer_width, buffer_height, pitch, pixel_format->bpp,
@@ -2764,7 +2744,8 @@ update_texture_image(struct vulkan_renderer *vr,
 	transition_image_layout(cmd_buffer, texture->image,
 				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	result = vkEndCommandBuffer(cmd_buffer);
 	check_vk_success(result, "vkEndCommandBuffer");
@@ -3192,6 +3173,12 @@ vulkan_renderer_buffer_init(struct weston_compositor *ec,
 	wl_signal_add(&buffer->destroy_signal, &vb->destroy_listener);
 }
 
+static bool
+vulkan_renderer_can_render_straight_alpha(struct weston_compositor *wc)
+{
+	return false;
+}
+
 static void
 vulkan_renderer_output_destroy_border(struct weston_output *output,
 				      enum weston_renderer_border_side side)
@@ -3534,6 +3521,13 @@ vulkan_renderer_create_output_state(struct weston_output *output,
 {
 	struct vulkan_output_state *vo;
 
+	if (output->fb_alpha_encoding == WESTON_OUTPUT_FB_ALPHA_STRAIGHT &&
+	    !vulkan_renderer_can_render_straight_alpha(output->compositor)) {
+		weston_log("Error: straight alpha framebuffers required for output '%s' but\n"
+			   "Vulkan-renderer does not support that.", output->name);
+		return -1;
+	}
+
 	vo = xzalloc(sizeof(*vo));
 
 	wl_list_init(&vo->renderbuffer_list);
@@ -3646,7 +3640,8 @@ vulkan_renderer_output_surface_create(struct weston_output *output,
 	const struct pixel_format_info *pixel_format = options->formats[0];
 
 	ret = vulkan_renderer_create_output_state(output, fb_size, area);
-	assert(ret == 0);
+	if (ret < 0)
+		return -1;
 
 	struct vulkan_output_state *vo = get_output_state(output);
 	vo->output_type = VULKAN_OUTPUT_SWAPCHAIN;
@@ -3689,7 +3684,8 @@ vulkan_renderer_output_surfaceless_create(struct weston_output *output,
 	const struct weston_geometry *area = &options->area;
 
 	ret = vulkan_renderer_create_output_state(output, &options->fb_size, &options->area);
-	assert(ret == 0);
+	if (ret < 0)
+		return -1;
 
 	struct vulkan_output_state *vo = get_output_state(output);
 	vo->output_type = VULKAN_OUTPUT_HEADLESS;
@@ -3892,7 +3888,8 @@ vulkan_renderer_create_renderbuffer(struct weston_output *output,
 	transition_image_layout(cmd_buffer, im->image,
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0, VK_ACCESS_TRANSFER_WRITE_BIT);
+				0, VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	// Wait here is bad, but this is only on renderbuffer creation
 	vulkan_renderer_cmd_end_wait(vr, &cmd_buffer);
@@ -4389,6 +4386,7 @@ vulkan_renderer_display_create(struct weston_compositor *ec,
 	vr->base.attach = vulkan_renderer_attach;
 	vr->base.destroy = vulkan_renderer_destroy;
 	vr->base.buffer_init = vulkan_renderer_buffer_init;
+	vr->base.can_render_straight_alpha = vulkan_renderer_can_render_straight_alpha;
 	vr->base.output_set_border = vulkan_renderer_output_set_border,
 	vr->base.type = WESTON_RENDERER_VULKAN;
 

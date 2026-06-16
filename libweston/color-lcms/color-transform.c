@@ -121,11 +121,8 @@ cmlcms_color_transform_destroy(struct cmlcms_color_transform *xform)
 	wl_list_remove(&xform->link);
 
 	cmsFreeToneCurveTriple(xform->pre_curve);
-
-	if (xform->cmap_3dlut)
-		cmsDeleteTransform(xform->cmap_3dlut);
-
 	cmsFreeToneCurveTriple(xform->post_curve);
+	cmlcms_color_transformer_fini(&xform->transformer);
 
 	if (xform->lcms_ctx)
 		cmsDeleteContext(xform->lcms_ctx);
@@ -390,14 +387,37 @@ merge_curvesets(cmsPipeline **lut, cmsContext context_id)
 	return modified;
 }
 
+static void
+linear_curvesets_to_matrices(cmsPipeline **lut, cmsContext context_id)
+{
+	cmsPipeline *pipe;
+	cmsStage *elem;
+	cmsStage *matrix;
+
+	pipe = cmsPipelineAlloc(context_id, 3, 3);
+	abort_oom_if_null(pipe);
+
+	elem = cmsPipelineGetPtrToFirstStage(*lut);
+	for (; elem; elem = cmsStageNext(elem)) {
+		matrix = lcms_matrix_stage_from_curve(context_id, elem);
+		if (matrix) {
+			cmsPipelineInsertStage(pipe, cmsAT_END, matrix);
+		} else {
+			cmsPipelineInsertStage(pipe, cmsAT_END, cmsStageDup(elem));
+		}
+	}
+
+	cmsPipelineFree(*lut);
+	*lut = pipe;
+}
+
 static const struct weston_color_tf_info *
 lcms_curve_matches_any_tf(struct weston_compositor *compositor,
 			  uint32_t lcms_curve_type, bool clamped_input,
 			  const float lcms_curve_params[3][MAX_PARAMS_LCMS_PARAM_CURVE])
 {
 	struct weston_color_curve_parametric curve = { 0 };
-	unsigned int i, j;
-	uint32_t n_lcms_curve_params;
+	unsigned int i;
 
 	curve.clamped_input = clamped_input;
 
@@ -407,27 +427,33 @@ lcms_curve_matches_any_tf(struct weston_compositor *compositor,
 		 * LittleCMS type 1 is the pure power-law curve, which is a
 		 * special case of LINPOW. See init_curve_from_type_1().
 		 */
-		n_lcms_curve_params = 1;
 		curve.type = WESTON_COLOR_CURVE_PARAMETRIC_TYPE_LINPOW;
+		for (i = 0; i < 3; i++) {
+			curve.params.chan[i].g = lcms_curve_params[i][0];
+			/* a = 1, b = 0, c = 1, d = 0 */
+			curve.params.chan[i].a = 1.0f;
+			curve.params.chan[i].b = 0.0f;
+			curve.params.chan[i].c = 1.0f;
+			curve.params.chan[i].d = 0.0f;
+		}
 		break;
 	case 4:
 		/**
 		 * LittleCMS type 4 is almost exactly the same as LINPOW. See
 		 * init_curve_from_type_4().
 		 */
-		n_lcms_curve_params = 5;
 		curve.type = WESTON_COLOR_CURVE_PARAMETRIC_TYPE_LINPOW;
+		for (i = 0; i < 3; i++) {
+			curve.params.chan[i].g = lcms_curve_params[i][0];
+			curve.params.chan[i].a = lcms_curve_params[i][1];
+			curve.params.chan[i].b = lcms_curve_params[i][2];
+			curve.params.chan[i].c = lcms_curve_params[i][3];
+			curve.params.chan[i].d = lcms_curve_params[i][4];
+		}
 		break;
 	default:
 		return NULL;
 	}
-
-	weston_assert_u32_le(compositor,
-			     n_lcms_curve_params, MAX_PARAMS_LCMS_PARAM_CURVE);
-
-	for (i = 0; i < 3; i++)
-		for (j = 0; j < n_lcms_curve_params; j++)
-			curve.params.chan[i].data[j] = lcms_curve_params[i][j];
 
 	return weston_color_tf_info_from_parametric_curve(&curve);
 }
@@ -1016,6 +1042,8 @@ lcms_optimize_pipeline(cmsPipeline **lut, cmsContext context_id)
 {
 	bool cont_opt;
 
+	linear_curvesets_to_matrices(lut, context_id);
+
 	/**
 	 * This optimization loop will delete identity stages. Deleting
 	 * identity matrix stages is harmless, but deleting identity
@@ -1335,10 +1363,10 @@ init_icc_to_icc_chain(struct cmlcms_color_transform *xform)
 	struct lcmsProfilePtr chain[5];
 	unsigned chain_len = 0;
 
-	weston_assert_enum(cm->base.compositor, out_prof->type, CMLCMS_PROFILE_TYPE_ICC);
+	weston_assert_enum_eq(cm->base.compositor, out_prof->type, CMLCMS_PROFILE_TYPE_ICC);
 	if (in_prof) {
-		weston_assert_enum(cm->base.compositor, in_prof->type,
-				   CMLCMS_PROFILE_TYPE_ICC);
+		weston_assert_enum_eq(cm->base.compositor, in_prof->type,
+				      CMLCMS_PROFILE_TYPE_ICC);
 	}
 
 	render_intent = xform->search_key.render_intent;
@@ -1378,11 +1406,14 @@ init_icc_to_icc_chain(struct cmlcms_color_transform *xform)
 
 	assert(chain_len <= ARRAY_LENGTH(chain));
 
-	weston_assert_ptr_null(cm->base.compositor, xform->cmap_3dlut);
-	xform->cmap_3dlut = xform_realize_icc_chain(xform, chain, chain_len,
-						    render_intent, allowed);
+	weston_assert_ptr_null(cm->base.compositor, xform->transformer.icc_chain);
+	xform->transformer.icc_chain = xform_realize_icc_chain(xform, chain, chain_len,
+							       render_intent, allowed);
+	if (!xform->transformer.icc_chain)
+		return false;
 
-	return !!xform->cmap_3dlut;
+	xform->transformer.element_mask |= CMLCMS_TRANSFORMER_ICC_CHAIN;
+	return true;
 }
 
 static void
@@ -1390,18 +1421,26 @@ weston_color_curve_set_from_params(struct weston_color_curve *curve,
 				   const struct weston_color_profile_params *p,
 				   enum weston_tf_direction dir)
 {
-	curve->type = WESTON_COLOR_CURVE_TYPE_ENUM;
-	curve->u.enumerated.tf = p->tf;
-	curve->u.enumerated.tf_direction = dir;
+	if (p->tf.info->tf == WESTON_TF_EXT_LINEAR) {
+		curve->type = WESTON_COLOR_CURVE_TYPE_IDENTITY;
+	} else {
+		curve->type = WESTON_COLOR_CURVE_TYPE_ENUM;
+		curve->u.enumerated.tf = p->tf;
+		curve->u.enumerated.tf_direction = dir;
+	}
 }
 
 static void
 weston_color_mapping_set_from_m4f(struct weston_color_mapping *mapping,
 				  struct weston_mat4f mat)
 {
-	mapping->type = WESTON_COLOR_MAPPING_TYPE_MATRIX;
-	mapping->u.mat.matrix = weston_m3f_from_m4f_xyz(mat);
-	mapping->u.mat.offset = weston_v3f_from_v4f_xyz(mat.col[3]);
+	if (matrix_is_identity(mat, MATRIX_PRECISION_BITS)) {
+		mapping->type = WESTON_COLOR_MAPPING_TYPE_IDENTITY;
+	} else {
+		mapping->type = WESTON_COLOR_MAPPING_TYPE_MATRIX;
+		mapping->u.mat.matrix = weston_m3f_from_m4f_xyz(mat);
+		mapping->u.mat.offset = weston_v3f_from_v4f_xyz(mat.col[3]);
+	}
 }
 
 static bool
@@ -1409,9 +1448,9 @@ init_blend_to_parametric(struct cmlcms_color_transform *xform)
 {
 	struct weston_color_profile_params *out = xform->search_key.output_profile->params;
 
-	weston_assert_enum(xform->base.cm->compositor,
-			   xform->search_key.output_profile->type,
-			   CMLCMS_PROFILE_TYPE_PARAMS);
+	weston_assert_enum_eq(xform->base.cm->compositor,
+			      xform->search_key.output_profile->type,
+			      CMLCMS_PROFILE_TYPE_PARAMS);
 
 	/*
 	 * For blend-to-output with a parametric output profile, all we need
@@ -1425,6 +1464,9 @@ init_blend_to_parametric(struct cmlcms_color_transform *xform)
 	xform->base.mapping.type = WESTON_COLOR_MAPPING_TYPE_IDENTITY;
 	xform->base.post_curve.type = WESTON_COLOR_CURVE_TYPE_IDENTITY;
 	xform->base.steps_valid = true;
+
+	xform->transformer.curve1 = xform->base.pre_curve;
+	xform->transformer.element_mask = CMLCMS_TRANSFORMER_CURVE1;
 
 	return true;
 }
@@ -1629,10 +1671,10 @@ init_parametric_to_parametric(struct cmlcms_color_transform *xform)
 	struct weston_mat4f mat;
 	char *errmsg = NULL;
 
-	weston_assert_enum(cm->base.compositor, recipe->input_profile->type,
-			   CMLCMS_PROFILE_TYPE_PARAMS);
-	weston_assert_enum(cm->base.compositor, recipe->output_profile->type,
-			   CMLCMS_PROFILE_TYPE_PARAMS);
+	weston_assert_enum_eq(cm->base.compositor, recipe->input_profile->type,
+			      CMLCMS_PROFILE_TYPE_PARAMS);
+	weston_assert_enum_eq(cm->base.compositor, recipe->output_profile->type,
+			      CMLCMS_PROFILE_TYPE_PARAMS);
 
 	/*
 	 * Decode input TF
@@ -1643,6 +1685,8 @@ init_parametric_to_parametric(struct cmlcms_color_transform *xform)
 	 */
 	weston_color_curve_set_from_params(&xform->base.pre_curve,
 					   recipe->input_profile->params, WESTON_FORWARD_TF);
+	xform->transformer.curve1 = xform->base.pre_curve;
+	xform->transformer.element_mask = CMLCMS_TRANSFORMER_CURVE1;
 
 	if (!rgb_to_rgb_matrix(&mat,
 			       recipe->input_profile->params,
@@ -1655,6 +1699,14 @@ init_parametric_to_parametric(struct cmlcms_color_transform *xform)
 	}
 
 	weston_color_mapping_set_from_m4f(&xform->base.mapping, mat);
+	switch (xform->base.mapping.type) {
+	case WESTON_COLOR_MAPPING_TYPE_IDENTITY:
+		break;
+	case WESTON_COLOR_MAPPING_TYPE_MATRIX:
+		xform->transformer.lin1 = xform->base.mapping.u.mat;
+		xform->transformer.element_mask |= CMLCMS_TRANSFORMER_LIN1;
+		break;
+	}
 
 	/* TODO: Use HLG OOTF for gamma correction? */
 	/* TODO: try https://gitlab.freedesktop.org/pq/color-and-hdr/-/issues/45 */
@@ -1667,6 +1719,8 @@ init_parametric_to_parametric(struct cmlcms_color_transform *xform)
 		weston_color_curve_set_from_params(&xform->base.post_curve,
 						   recipe->output_profile->params,
 						   WESTON_INVERSE_TF);
+		xform->transformer.curve2 = xform->base.post_curve;
+		xform->transformer.element_mask |= CMLCMS_TRANSFORMER_CURVE2;
 		break;
 	case CMLCMS_CATEGORY_BLEND_TO_OUTPUT:
 		weston_assert_not_reached(xform->base.cm->compositor,
@@ -1677,6 +1731,261 @@ init_parametric_to_parametric(struct cmlcms_color_transform *xform)
 
 	return true;
 }
+
+static cmsCIExyY
+lcms_xyY_from(struct weston_CIExy p)
+{
+	return (cmsCIExyY){ p.x, p.y, 1.0f };
+}
+
+/** Create LittleCMS profile for an optical space
+ *
+ * \param cm The color manager, for the LittleCMS context.
+ * \param gm The primaries and the white point.
+ * \param rel_black_level The relative black level, when white maximum
+ * luminance is 1.0.
+ *
+ * \return A LittleCMS RGB Display profile where the transfer characteristic
+ * is linear from rel_black_level to 1.0.
+ */
+static struct lcmsProfilePtr
+optical_profile(struct weston_color_manager_lcms *cm,
+		const struct weston_color_gamut *gm,
+		float rel_black_level)
+{
+	cmsCIExyY wp = lcms_xyY_from(gm->white_point);
+	cmsCIExyYTRIPLE prim = {
+		lcms_xyY_from(gm->primary[0]),
+		lcms_xyY_from(gm->primary[1]),
+		lcms_xyY_from(gm->primary[2])
+	};
+	cmsHPROFILE hnd;
+	cmsToneCurve *trc[3];
+	cmsFloat32Number points[2] = { rel_black_level, 1.0f };
+
+	trc[2] = trc[1] = trc[0] =
+		cmsBuildTabulatedToneCurveFloat(cm->lcms_ctx, 2, points);
+	abort_oom_if_null(trc[0]);
+
+	hnd = cmsCreateRGBProfileTHR(cm->lcms_ctx, &wp, &prim, trc);
+	weston_assert_ptr_not_null(cm->base.compositor, hnd);
+
+	cmsFreeToneCurve(trc[0]);
+	return (struct lcmsProfilePtr){ hnd };
+}
+
+enum matrix_order {
+	/** Add new matrix to the right of the existing matrix. */
+	MATRIX_PREPEND,
+	/** Add new matrix to the left of the existing matrix. */
+	MATRIX_APPEND,
+};
+
+static void
+patch_color_mapping_matrix(struct weston_color_mapping *mapping,
+			   struct weston_mat4f M, enum matrix_order order)
+{
+	struct weston_mat4f cmap;
+	struct weston_color_mapping_matrix *mapmat = NULL;
+
+	switch (mapping->type) {
+	case WESTON_COLOR_MAPPING_TYPE_IDENTITY:
+		weston_color_mapping_set_from_m4f(mapping, M);
+		return;
+	case WESTON_COLOR_MAPPING_TYPE_MATRIX:
+		mapmat = &mapping->u.mat;
+		break;
+	}
+
+	cmap = weston_m4f_from_m3f_v3f(mapmat->matrix, mapmat->offset);
+	switch (order) {
+	case MATRIX_PREPEND:
+		cmap = weston_m4f_mul_m4f(cmap, M);
+		break;
+	case MATRIX_APPEND:
+		cmap = weston_m4f_mul_m4f(M, cmap);
+		break;
+	}
+
+	weston_color_mapping_set_from_m4f(mapping, cmap);
+}
+
+static bool
+init_icc_to_parametric(struct cmlcms_color_transform *xform)
+{
+	struct weston_color_manager_lcms *cm = to_cmlcms(xform->base.cm);
+	struct cmlcms_color_profile *in_prof = xform->search_key.input_profile;
+	struct cmlcms_color_profile *out_prof = xform->search_key.output_profile;
+	const struct weston_color_profile_params *out = out_prof->params;
+	const struct weston_render_intent_info *render_intent;
+	struct color_transform_steps_mask allowed = {
+		STEP_PRE_CURVE | STEP_MAPPING
+	};
+	struct lcmsProfilePtr chain[2];
+	cmsHTRANSFORM icc_chain;
+	struct weston_mat4f M;
+	float v;
+
+	weston_assert_u32_eq(cm->base.compositor, in_prof->type, CMLCMS_PROFILE_TYPE_ICC);
+	weston_assert_u32_eq(cm->base.compositor, out_prof->type, CMLCMS_PROFILE_TYPE_PARAMS);
+
+	render_intent = xform->search_key.render_intent;
+
+	/*
+	 * The ICC chain converts input device RGB to optical output RGB
+	 * with relative luminance. The input reference luminance
+	 * is 1.0, and implicitly it is also the input peak luminance.
+	 * The TRC adds target_min_luminance as necessary, meaning that
+	 * optical output RGB 0,0,0 corresponds to target_min_luminance.
+	 * Optical output RGB 1,1,1 corresponds to reference white luminance.
+	 */
+	chain[0] = in_prof->icc.profile;
+	chain[1] = optical_profile(cm, &out->primaries,
+				   out->target_min_luminance / out->reference_white_luminance);
+
+	icc_chain = xform_realize_icc_chain(xform, chain, 2, render_intent, allowed);
+	cmsCloseProfile(chain[1].p);
+	if (!icc_chain)
+		return false;
+
+	/* Map [0, 1] to output [target_min, reference]. */
+	v = out->reference_white_luminance - out->target_min_luminance;
+	M = weston_m4f_scaling(v, v, v);
+	v = out->target_min_luminance; /* applied below */
+
+	/* Convert cd/m² to output [0, 1]. */
+	v -= out->min_luminance;
+	M = weston_m4f_mul_m4f(weston_m4f_translation(v, v, v), M);
+	v = 1.0f / (out->max_luminance - out->min_luminance);
+	M = weston_m4f_mul_m4f(weston_m4f_scaling(v, v, v), M);
+
+	/* TODO: Dynamic range adjustment */
+
+	if (xform->base.steps_valid) {
+		weston_assert_u32_eq(cm->base.compositor,
+				     xform->base.post_curve.type,
+				     WESTON_COLOR_CURVE_TYPE_IDENTITY);
+
+		patch_color_mapping_matrix(&xform->base.mapping, M, MATRIX_APPEND);
+
+		if (xform->search_key.category == CMLCMS_CATEGORY_INPUT_TO_OUTPUT) {
+			weston_color_curve_set_from_params(&xform->base.post_curve,
+							   out, WESTON_INVERSE_TF);
+		}
+	}
+
+	xform->transformer.icc_chain = icc_chain;
+	xform->transformer.element_mask = CMLCMS_TRANSFORMER_ICC_CHAIN;
+
+	if (!matrix_is_identity(M, MATRIX_PRECISION_BITS)) {
+		xform->transformer.lin2.matrix = weston_m3f_from_m4f_xyz(M);
+		xform->transformer.lin2.offset = weston_v3f_from_v4f_xyz(M.col[3]);
+		xform->transformer.element_mask |= CMLCMS_TRANSFORMER_LIN2;
+	}
+
+	if (xform->search_key.category == CMLCMS_CATEGORY_INPUT_TO_OUTPUT) {
+		weston_color_curve_set_from_params(&xform->transformer.curve2,
+						   out, WESTON_INVERSE_TF);
+		xform->transformer.element_mask |= CMLCMS_TRANSFORMER_CURVE2;
+	}
+
+	return true;
+}
+
+static bool
+init_parametric_to_icc(struct cmlcms_color_transform *xform)
+{
+	struct weston_color_manager_lcms *cm = to_cmlcms(xform->base.cm);
+	struct cmlcms_color_profile *in_prof = xform->search_key.input_profile;
+	struct cmlcms_color_profile *out_prof = xform->search_key.output_profile;
+	const struct weston_color_profile_params *in = in_prof->params;
+	const struct weston_render_intent_info *render_intent;
+	struct color_transform_steps_mask allowed = {
+		STEP_MAPPING | STEP_POST_CURVE
+	};
+	struct lcmsProfilePtr optical_prof;
+	struct lcmsProfilePtr chain[5];
+	cmsHTRANSFORM icc_chain;
+	unsigned chain_len = 0;
+	struct weston_mat4f M;
+	float v;
+
+	weston_assert_u32_eq(cm->base.compositor, in_prof->type, CMLCMS_PROFILE_TYPE_PARAMS);
+	weston_assert_u32_eq(cm->base.compositor, out_prof->type, CMLCMS_PROFILE_TYPE_ICC);
+
+	render_intent = xform->search_key.render_intent;
+
+	/*
+	 * Pre-curve shall have EOTF to convert electrical device RGB to
+	 * min-max relative optical device RGB.
+	 */
+
+	/* TODO: Dynamic range adjustment */
+
+	/* Convert input [0, 1] to cd/m² */
+	v = in->max_luminance - in->min_luminance;
+	M = weston_m4f_scaling(v, v, v);
+	v = in->min_luminance; /* applied below */
+
+	/* Map input [target_min_luminance, reference] to [0, 1] */
+	v -= in->target_min_luminance;
+	M = weston_m4f_mul_m4f(weston_m4f_translation(v, v, v), M);
+	v = 1.0f / (in->reference_white_luminance - in->target_min_luminance);
+	M = weston_m4f_mul_m4f(weston_m4f_scaling(v, v, v), M);
+
+	/* The above is the input to the ICC chain. */
+	optical_prof = optical_profile(cm, &in->primaries,
+				       in->target_min_luminance / in->reference_white_luminance);
+
+	/* see init_icc_to_icc_chain() */
+	chain[chain_len++] = optical_prof;
+	switch (xform->search_key.category) {
+	case CMLCMS_CATEGORY_INPUT_TO_BLEND:
+		chain[chain_len++] = out_prof->icc.profile;
+		chain[chain_len++] = out_prof->extract.eotf;
+		break;
+	case CMLCMS_CATEGORY_INPUT_TO_OUTPUT:
+		chain[chain_len++] = out_prof->icc.profile;
+		if (out_prof->extract.vcgt.p)
+			chain[chain_len++] = out_prof->extract.vcgt;
+		break;
+	case CMLCMS_CATEGORY_BLEND_TO_OUTPUT:
+		weston_assert_not_reached(xform->base.cm->compositor,
+					  "blend-to-output handled elsewhere");
+	}
+
+	assert(chain_len <= ARRAY_LENGTH(chain));
+
+	icc_chain = xform_realize_icc_chain(xform, chain, chain_len, render_intent, allowed);
+	cmsCloseProfile(optical_prof.p);
+	if (!icc_chain)
+		return false;
+
+	if (xform->base.steps_valid) {
+		weston_assert_u32_eq(cm->base.compositor,
+				     xform->base.pre_curve.type,
+				     WESTON_COLOR_CURVE_TYPE_IDENTITY);
+
+		weston_color_curve_set_from_params(&xform->base.pre_curve,
+						   in, WESTON_FORWARD_TF);
+		patch_color_mapping_matrix(&xform->base.mapping, M, MATRIX_PREPEND);
+	}
+
+	weston_color_curve_set_from_params(&xform->transformer.curve1,
+					   in, WESTON_FORWARD_TF);
+	xform->transformer.element_mask = CMLCMS_TRANSFORMER_CURVE1;
+
+	if (!matrix_is_identity(M, MATRIX_PRECISION_BITS)) {
+		xform->transformer.lin1.matrix = weston_m3f_from_m4f_xyz(M);
+		xform->transformer.lin1.offset = weston_v3f_from_v4f_xyz(M.col[3]);
+		xform->transformer.element_mask |= CMLCMS_TRANSFORMER_LIN1;
+	}
+
+	xform->transformer.icc_chain = icc_chain;
+	xform->transformer.element_mask |= CMLCMS_TRANSFORMER_ICC_CHAIN;
+
+	return true;
+ }
 
 enum cmlcms_color_transform_type {
 	CMLCMS_BLEND_TO_ICC   = 0x0,
@@ -1754,9 +2063,10 @@ cmlcms_color_transform_recipe_string(const struct cmlcms_color_transform_recipe 
 }
 
 static bool
-build_3d_lut(struct weston_compositor *compositor, cmsHTRANSFORM cmap_3dlut,
-	     unsigned int len_shaper, const float *shaper,
-	     unsigned int len_lut3d, float *lut3d)
+build_clut(struct weston_compositor *compositor,
+	   const struct cmlcms_color_transformer *transformer,
+	   unsigned int len_shaper, const float *shaper,
+	   unsigned int len_clut, float *clut)
 {
 	const float *const red_curve = &shaper[0];
 	const float *const green_curve = &shaper[len_shaper];
@@ -1772,27 +2082,26 @@ build_3d_lut(struct weston_compositor *compositor, cmsHTRANSFORM cmap_3dlut,
 	 * Ensure the indices and byte counts cannot overflow,
 	 * and memory usage does not get ridiculous. Arbitrary limit.
 	 */
-	weston_assert_u32_lt(compositor, len_lut3d, 100);
+	weston_assert_u32_lt(compositor, len_clut, 100);
 
 	/*
-	 * A temporary allocation that holds two 1D LUTs of length len_lut3d
-	 * and one scratch array of vec3f of length len_lut3d.
+	 * A temporary allocation that holds two 1D LUTs of length len_clut
+	 * and one scratch array of vec3f of length len_clut.
 	 */
 	const uint32_t bytes_per_elem = 2 * sizeof (float) + sizeof *rgb_in;
-	tmp = malloc(len_lut3d * bytes_per_elem);
+	tmp = malloc(len_clut * bytes_per_elem);
 
 	inverse_r = &tmp[0];
-	inverse_g = &tmp[len_lut3d];
-	rgb_in = (struct weston_vec3f *)&tmp[2 * len_lut3d];
-
+	inverse_g = &tmp[len_clut];
+	rgb_in = (struct weston_vec3f *)&tmp[2 * len_clut];
 	/*
 	 * For each channel, use the shaper to compute the value x such that
 	 * y(x) = index / (len - 1). As the shaper is a LUT, we find the closest
 	 * neighbors of such point (x, y) and then use linear interpolation to
 	 * estimate x.
 	 */
-	for (i = 0; i < len_lut3d; i++) {
-		float y = (float)i / (len_lut3d - 1);
+	for (i = 0; i < len_clut; i++) {
+		float y = (float)i / (len_clut - 1);
 		inverse_r[i] = weston_inverse_evaluate_lut1d(compositor,
 							     len_shaper,
 							     red_curve,
@@ -1804,9 +2113,9 @@ build_3d_lut(struct weston_compositor *compositor, cmsHTRANSFORM cmap_3dlut,
 	}
 
 	/*
-	 * Fill in the 3D LUT: LUT(Rin, Gin, Bin) = { Rout, Gout, Bout }
+	 * Fill in the 3D cLUT: LUT(Rin, Gin, Bin) = { Rout, Gout, Bout }
 	 * Each of Rin, Gin and Bin varies from 0.0 to 1.0. The range [0.0, 1.0]
-	 * is evenly divided into len_lut3d number of sampling points. The
+	 * is evenly divided into len_clut number of sampling points. The
 	 * indices of the sampling points are index_r, index_g, index_b.
 	 *
 	 * To compute { Rout, Gout, Bout }, first Rin, Gin, Bin must go through
@@ -1816,27 +2125,29 @@ build_3d_lut(struct weston_compositor *compositor, cmsHTRANSFORM cmap_3dlut,
 	 * separable.
 	 *
 	 * The next step is not separable, so we iterate through all points in
-	 * the 3D volume. The points are transformed len_lut3d points at a time
+	 * the 3D volume. The points are transformed len_clut points at a time
 	 * (rgb_in array) to strike a balance between the number of function
 	 * calls and the memory requirements.
 	 */
-	for (index_b = 0; index_b < len_lut3d; index_b++) {
+	for (index_b = 0; index_b < len_clut; index_b++) {
 		float inverse_b = weston_inverse_evaluate_lut1d(compositor,
 								len_shaper,
 								blue_curve,
-								(float)index_b / (len_lut3d - 1));
-		for (i = 0; i < len_lut3d; i++)
+								(float)index_b / (len_clut - 1));
+		for (i = 0; i < len_clut; i++)
 			rgb_in[i].b = inverse_b;
 
-		for (index_g = 0; index_g < len_lut3d; index_g++) {
-			for (index_r = 0; index_r < len_lut3d; index_r++) {
+		for (index_g = 0; index_g < len_clut; index_g++) {
+			for (index_r = 0; index_r < len_clut; index_r++) {
 				rgb_in[index_r].g = inverse_g[index_g];
 				rgb_in[index_r].r = inverse_r[index_r];
 			}
 
 			index_r = 0;
-			i = 3 * (index_r + len_lut3d * (index_g + len_lut3d * index_b));
-			cmsDoTransform(cmap_3dlut, rgb_in, &lut3d[i], len_lut3d);
+			i = 3 * (index_r + len_clut * (index_g + len_clut * index_b));
+			cmlcms_color_transformer_eval(compositor, transformer,
+						      (struct weston_vec3f *)&clut[i],
+						      rgb_in, len_clut);
 		}
 	}
 
@@ -1876,12 +2187,15 @@ is_monotonic(const float *lut, unsigned len)
 }
 
 static bool
-build_shaper(cmsContext lcms_ctx, cmsHTRANSFORM cmap_3dlut,
-	     unsigned int len_shaper, float *shaper)
+build_shaper(struct weston_compositor *compositor,
+	     cmsContext lcms_ctx,
+	     const struct cmlcms_color_transformer *transformer,
+	     unsigned int len_shaper,
+	     float *shaper)
 {
 	float *curves[3];
 	float divider = len_shaper - 1;
-	float rgb_in[3], rgb_out[3];
+	struct weston_vec3f rgb_in, rgb_out;
 	cmsToneCurve *tc[3] = { NULL };
 	unsigned int ch, i;
 	float smoothing_param;
@@ -1904,10 +2218,11 @@ build_shaper(cmsContext lcms_ctx, cmsHTRANSFORM cmap_3dlut,
 	curves[2] = &shaper[2 * len_shaper];
 
 	for (i = 0; i < len_shaper; i++) {
-		rgb_in[0] = rgb_in[1] = rgb_in[2] = (float)i / divider;
-		cmsDoTransform(cmap_3dlut, rgb_in, rgb_out, 1);
+		rgb_in.r = rgb_in.g = rgb_in.b = (float)i / divider;
+		cmlcms_color_transformer_eval(compositor, transformer,
+					      &rgb_out, &rgb_in, 1);
 		for (ch = 0; ch < 3; ch++)
-			curves[ch][i] = ensure_unorm(rgb_out[ch]);
+			curves[ch][i] = ensure_unorm(rgb_out.el[ch]);
 	}
 
 	for (ch = 0; ch < 3; ch++) {
@@ -1944,29 +2259,29 @@ out:
 }
 
 /**
- * Based on [1]. We get cmsHTRANSFORM cmap_3dlut and decompose into a shaper
- * (3x1D LUT) + 3D LUT. With that, we can reduce the 3D LUT dimension size
- * without loosing precision. 3D LUT dimension size is problematic because it
- * demands n³ memory. In this function we construct such shaper.
+ * Based on [1]. We get the transformer and decompose into a shaper
+ * (3x1D LUT) + 3D cLUT. With that, we can reduce the 3D LUT dimension size
+ * without losing precision. 3D LUT dimension size is problematic because it
+ * demands n³ memory.
  *
  * [1] https://www.littlecms.com/ASICprelinerization_CGIV08.pdf
  */
 static bool
-xform_to_shaper_plus_3dlut(struct weston_color_transform *xform_base,
-			   uint32_t len_shaper, float *shaper,
-			   uint32_t len_lut3d, float *lut3d)
+xform_to_clut(struct weston_color_transform *xform_base,
+	      uint32_t len_shaper, float *shaper,
+	      uint32_t len_clut, float *clut)
 {
 	struct cmlcms_color_transform *xform = to_cmlcms_xform(xform_base);
 	struct weston_compositor *compositor = xform_base->cm->compositor;
 	bool ret;
 
-	ret = build_shaper(xform->lcms_ctx, xform->cmap_3dlut,
+	ret = build_shaper(compositor, xform->lcms_ctx, &xform->transformer,
 			   len_shaper, shaper);
 	if (!ret)
 		return false;
 
-	ret = build_3d_lut(compositor, xform->cmap_3dlut,
-			   len_shaper, shaper, len_lut3d, lut3d);
+	ret = build_clut(compositor, &xform->transformer,
+			 len_shaper, shaper, len_clut, clut);
 	if (!ret)
 		return false;
 
@@ -1995,7 +2310,7 @@ cmlcms_color_transform_create(struct weston_color_manager_lcms *cm,
 	xform = xzalloc(sizeof *xform);
 	weston_color_transform_init(&xform->base, &cm->base);
 	wl_list_init(&xform->link);
-	xform->base.to_shaper_plus_3dlut = xform_to_shaper_plus_3dlut;
+	xform->base.to_clut = xform_to_clut;
 	cmlcms_color_transform_recipe_copy(&xform->search_key, recipe);
 
 	weston_log_scope_printf(cm->transforms_scope,
@@ -2019,8 +2334,10 @@ cmlcms_color_transform_create(struct weston_color_manager_lcms *cm,
 		ret = init_icc_to_icc_chain(xform);
 		break;
 	case CMLCMS_ICC_TO_PARAM:
+		ret = init_icc_to_parametric(xform);
 		break;
 	case CMLCMS_PARAM_TO_ICC:
+		ret = init_parametric_to_icc(xform);
 		break;
 	case CMLCMS_PARAM_TO_PARAM:
 		ret = init_parametric_to_parametric(xform);
@@ -2039,6 +2356,12 @@ cmlcms_color_transform_create(struct weston_color_manager_lcms *cm,
 	free(str);
 
 	str = weston_color_transform_details_string(4, &xform->base);
+	if (str) {
+		weston_log_scope_printf(cm->transforms_scope, "%s", str);
+		free(str);
+	}
+
+	str = cmlcms_color_transformer_string(4, &xform->transformer);
 	if (str) {
 		weston_log_scope_printf(cm->transforms_scope, "%s", str);
 		free(str);

@@ -156,7 +156,7 @@ static const struct setup_args my_setup_args[] = {
 	{
 		.meta.name = "GL",
 		.renderer = WESTON_RENDERER_GL,
-		.logging_scopes = "log,gl-shader-generator",
+		.logging_scopes = "log,gl-renderer-paint-nodes,gl-shader-generator",
 		.dmabuf_format_must_pass = gl_dmabuf_format_must_pass,
 		.dmabuf_format_num = ARRAY_LENGTH(gl_dmabuf_format_must_pass),
 		.gl_force_import_yuv_fallback = false,
@@ -164,7 +164,7 @@ static const struct setup_args my_setup_args[] = {
 	{
 		.meta.name = "GL force-import-yuv-fallback",
 		.renderer = WESTON_RENDERER_GL,
-		.logging_scopes = "log,gl-shader-generator",
+		.logging_scopes = "log,gl-renderer-paint-nodes,gl-shader-generator",
 		.dmabuf_format_must_pass = gl_dmabuf_format_must_pass,
 		.dmabuf_format_num = ARRAY_LENGTH(gl_dmabuf_format_must_pass),
 		.gl_force_import_yuv_fallback = true,
@@ -191,7 +191,7 @@ fixture_setup(struct weston_test_harness *harness, const struct setup_args *arg)
 	setup.height = 264;
 	setup.shell = SHELL_TEST_DESKTOP;
 	setup.logging_scopes = arg->logging_scopes;
-	setup.refresh = HIGHEST_OUTPUT_REFRESH;
+	setup.refresh = 0;
 	setup.test_quirks.gl_force_import_yuv_fallback =
 		arg->gl_force_import_yuv_fallback;
 
@@ -1416,7 +1416,7 @@ xyuv8888_create_buffer(struct client *client,
 	uint8_t cb;
 	uint8_t y0;
 
-	test_assert_enum(drm_format, DRM_FORMAT_XYUV8888);
+	test_assert_enum_eq(drm_format, DRM_FORMAT_XYUV8888);
 
 	buf = client_buffer_create(client, &args);
 	if (!buf)
@@ -1546,16 +1546,13 @@ static void
 show_window_with_client_buffer(struct client *client, struct client_buffer *buf)
 {
 	struct surface *surface = client->surface;
-	int done;
 
 	weston_test_move_surface(client->test->weston_test, surface->wl_surface,
 				 4, 4);
 	wl_surface_attach(surface->wl_surface, buf->wl_buffer, 0, 0);
 	wl_surface_damage(surface->wl_surface, 0, 0, buf->width,
 			  buf->height);
-	frame_callback_set(surface->wl_surface, &done);
 	wl_surface_commit(surface->wl_surface);
-	frame_callback_wait(client, &done);
 }
 
 static const struct client_buffer_case client_buffer_cases[] = {
@@ -1727,9 +1724,10 @@ this_is_an_unwanted_case(void)
 /*
  * Test that various SHM pixel formats result in correct coloring on screen.
  */
-TEST_P(client_buffer_shm, client_buffer_cases)
+static enum test_result_code
+client_buffer_shm(struct wet_testsuite_data *suite_data,
+		  const struct client_buffer_case *cb_case)
 {
-	const struct client_buffer_case *cb_case = data;
 	const struct setup_args *args = &my_setup_args[get_test_fixture_index()];
 	enum test_result_code res;
 
@@ -1751,9 +1749,10 @@ TEST_P(client_buffer_shm, client_buffer_cases)
 /*
  * Test that various DRM pixel formats result in correct coloring on screen.
  */
-TEST_P(client_buffer_drm, client_buffer_cases)
+static enum test_result_code
+client_buffer_drm(struct wet_testsuite_data *suite_data,
+		  const struct client_buffer_case *cb_case)
 {
-	const struct client_buffer_case *cb_case = data;
 	const struct setup_args *args = &my_setup_args[get_test_fixture_index()];
 	enum test_result_code res;
 
@@ -1781,3 +1780,8 @@ TEST_P(client_buffer_drm, client_buffer_cases)
 
 	return skip_is_just_fine(res);
 }
+
+DECLARE_TEST_LIST(
+	TESTFN_ARG(client_buffer_shm, client_buffer_cases),
+	TESTFN_ARG(client_buffer_drm, client_buffer_cases),
+);

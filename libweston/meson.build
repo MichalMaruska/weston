@@ -11,6 +11,7 @@ deps_libweston = [
 ]
 srcs_libweston = [
 	git_version_h,
+	'alpha-modifier.c',
 	'animation.c',
 	'auth.c',
 	'bindings.c',
@@ -39,7 +40,6 @@ srcs_libweston = [
 	'pixel-formats.c',
 	'pixman-renderer.c',
 	'plugin-registry.c',
-	'screenshooter.c',
 	'surface-state.c',
 	'timeline.c',
 	'touch-calibration.c',
@@ -48,6 +48,8 @@ srcs_libweston = [
 	'weston-log-flight-rec.c',
 	'weston-log.c',
 	'weston-direct-display.c',
+	alpha_modifier_v1_protocol_c,
+	alpha_modifier_v1_server_protocol_h,
 	color_management_v1_protocol_c,
 	color_management_v1_server_protocol_h,
 	color_representation_v1_protocol_c,
@@ -118,6 +120,8 @@ endif
 
 if get_option('perfetto')
 	srcs_libweston += [
+		'perfetto/annotations.c',
+		'perfetto/annotations.h',
 		'perfetto/u_perfetto.cc',
 		'perfetto/u_perfetto.h',
 		'timeline-perfetto.c'
@@ -208,6 +212,10 @@ if get_option('backend-drm')
 	)
 	dep_session_helper = declare_dependency(link_with: lib_session_helper)
 endif
+
+libdrm_version = dep_libdrm.version()
+libdrm_supports_color_pipeline = libdrm_version.version_compare('>=2.4.130')
+config_h.set10('CAN_OFFLOAD_COLOR_PIPELINE', libdrm_supports_color_pipeline)
 
 lib_libinput_backend = static_library(
 	'libinput-backend',

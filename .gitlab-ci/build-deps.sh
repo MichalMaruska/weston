@@ -59,7 +59,7 @@ fdo_log_section_end install_meson
 # just a regular container.
 fdo_log_section_start_collapsed install_kernel "install_kernel"
 if [[ -n "$KERNEL_DEFCONFIG" ]]; then
-	git clone --depth=1 --branch=v6.18 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux
+	git clone --depth=1 --branch drm-misc-next-2026-03-20 https://gitlab.freedesktop.org/drm/misc/kernel.git linux
 	cd linux
 
 	if [[ "${BUILD_ARCH}" = "x86-64" ]]; then
@@ -168,9 +168,7 @@ ninja ${NINJAFLAGS} -C build install
 cd ..
 rm -rf glslang
 
-# The 25.3 was the first stable release where the Vulkan backend works with
-# vkms+lavapipe.
-git clone --branch mesa-25.3.2 --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
+git clone --branch mesa-26.0.4 --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
 cd mesa
 meson setup build --wrap-mode=nofallback -Dauto_features=disabled \
 	-Dgallium-drivers=llvmpipe -Dvulkan-drivers=swrast -Dvideo-codecs= \
@@ -210,13 +208,13 @@ fdo_log_section_end install_seatd
 
 # Build and install aml and neatvnc, which are required for the VNC backend
 fdo_log_section_start_collapsed install_aml_neatvnc "install_aml_neatvnc"
-git clone --branch v0.3.0 --depth=1 https://github.com/any1/aml.git
+git clone --branch v1.0.0 --depth=1 https://github.com/any1/aml.git
 cd aml
 meson setup build --wrap-mode=nofallback
 ninja ${NINJAFLAGS} -C build install
 cd ..
 rm -rf aml
-git clone --branch v0.7.0 --depth=1 https://github.com/any1/neatvnc.git
+git clone --branch v1.0.0 --depth=1 https://github.com/any1/neatvnc.git
 cd neatvnc
 meson setup build --wrap-mode=nofallback -Dauto_features=disabled
 ninja ${NINJAFLAGS} -C build install

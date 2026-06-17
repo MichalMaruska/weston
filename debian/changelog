@@ -4,8 +4,11 @@ weston (15.0.91-1) UNRELEASED; urgency=medium
   * Adjust VCS fields in d/control and d/gbp.conf for experimental
   * Drop backend-vnc-Update-to-Neat-VNC-1.0.0-aml-1.0.0.patch, merged upstream
   * Bump SONAME to libweston-16-0
+  * Don't install anymore wcap-decode, removed upstream
+  * Don't install remoting and pipewire plugins, deprecated upstream
+  * Update symbols file
 
- -- Dylan Aïssi <daissi@debian.org>  Tue, 16 Jun 2026 17:51:31 +0200
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 17 Jun 2026 17:31:21 +0200
 
 weston (15.0.1-2) experimental; urgency=medium
 

@@ -1,0 +1,12 @@
+Description: Update of PAM configuration to use common-auth and common-account
+Bug-Debian: https://bugs.debian.org/1140097
+Forwarded: not-needed
+
+--- a/pam/weston-remote-access
++++ b/pam/weston-remote-access
+@@ -1,3 +1,2 @@
+-#%PAM-1.0
+-auth    include login
+-account include login
++@include common-auth
++@include common-account

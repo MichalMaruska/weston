@@ -3616,12 +3616,23 @@ create_renderpass(struct weston_output *output, VkFormat format, VkImageLayout a
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &attachment_reference,
 	};
+	const VkSubpassDependency subpass_dependency = {
+		.srcSubpass = VK_SUBPASS_EXTERNAL,
+		.dstSubpass = 0,
+		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+				 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+	};
 	const VkRenderPassCreateInfo renderpass_create_info = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 		.attachmentCount = 1,
 		.pAttachments = &attachment_description,
 		.subpassCount = 1,
 		.pSubpasses = &subpass_description,
+		.dependencyCount = 1,
+		.pDependencies = &subpass_dependency,
 	};
 
 	result = vkCreateRenderPass(vr->dev, &renderpass_create_info, NULL, &vo->renderpass);
@@ -3887,8 +3898,8 @@ vulkan_renderer_create_renderbuffer(struct weston_output *output,
 
 	transition_image_layout(cmd_buffer, im->image,
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0, VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				0, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 				VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 
 	// Wait here is bad, but this is only on renderbuffer creation

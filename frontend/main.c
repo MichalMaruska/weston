@@ -4169,15 +4169,15 @@ load_drm_backend(struct weston_compositor *c, int *argc, char **argv,
 	wb = wet_compositor_load_backend(c, WESTON_BACKEND_DRM, &config.base,
 					 drm_heads_changed, NULL);
 
+	free(config.gbm_format);
+	free(config.seat_id);
+	free(config.specific_device);
+
 	if (!wb)
 		return -1;
 
 
 	wet->drm_backend_loaded = true;
-
-	free(config.gbm_format);
-	free(config.seat_id);
-	free(config.specific_device);
 
 	return 0;
 }
@@ -5471,16 +5471,16 @@ wet_main(int argc, char *argv[], const struct weston_testsuite_data *test_data)
 		goto out;
 	}
 
-	if (weston_compositor_backends_loaded(wet.compositor) < 0)
-		goto out;
-
-	wet_handle_mirror_outputs(&wet);
-
 	if (test_data && !check_compositor_capabilities(wet.compositor,
 				test_data->test_quirks.required_capabilities)) {
 		ret = WET_MAIN_RET_MISSING_CAPS;
 		goto out;
 	}
+
+	if (weston_compositor_backends_loaded(wet.compositor) < 0)
+		goto out;
+
+	wet_handle_mirror_outputs(&wet);
 
 	weston_compositor_flush_heads_changed(wet.compositor);
 	if (wet.init_failed)

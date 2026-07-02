@@ -26,7 +26,7 @@ Copyright: 2016 Armin Krezović
            2014 Pekka Paalanen
            2012 Philipp Brüschweiler
            2013 Philip Withnall
-           2016 Quentin "Sardem FF7" Glidic
+           2016 Morgane "Sardem FF7" Glidic
            2012-2013 Raspberry Pi Foundation
            2010-2015 Red Hat, Inc.
            2013 Richard Hughes
@@ -37,6 +37,24 @@ Copyright: 2016 Armin Krezović
            2011 Tim Wiederhake
            2008 Tungsten Graphics, Inc
            2013 Vasily Khoruzhick
+           2021-2022 Advanced Micro Devices, Inc
+           2025-2026 Amazon.com, Inc. or its affiliates
+           2012 Arvin Schnell <arvin.schnell@gmail.com>
+           2018 DisplayLink (UK) Ltd
+           2025 Erico Nunes
+           2021-2022 Google LLC
+           2019 Harish Krupo
+           2020 Kenny Levinsen
+           1998-2023 Marti Maria Saguer
+           2020 Microsoft
+           2019 Pengutronix, Michael Olbrich <m.olbrich@pengutronix.de>
+           2022 Pengutronix, Rouven Czerwinski <r.czerwinski@pengutronix.de> based on backend-rdp
+           2021-2023 Pengutronix, Philipp Zabel <p.zabel@pengutronix.de
+           2019 Sebastian Wick
+           2019-2020 Stefan Agner <stefan@agner.ch>
+           2024 SUSE Software Solutions Germany GmbH
+           2018-2020 Zodiac Inflight Innovations
+           2018 Renesas Electronics Corp
 License: Expat
 
 Files: clients/tablet.c
@@ -54,7 +72,7 @@ License: CC-BY-SA-3.0
 Files: shared/hash.*
 Copyright: 2009 Intel Corporation
            1988-2004 Keith Packard and Bart Massey.
-License: Expat-NoAdvertising
+License: X11
 
 License: Expat
  Permission is hereby granted, free of charge, to any person obtaining a
@@ -95,7 +113,7 @@ License: HPND-sell-variant
  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE
 
-License: Expat-NoAdvertising
+License: X11
  Permission is hereby granted, free of charge, to any person obtaining a
  copy of this software and associated documentation files (the "Software"),
  to deal in the Software without restriction, including without limitation

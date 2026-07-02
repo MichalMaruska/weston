@@ -1,6 +1,7 @@
 weston (15.0.92-1) UNRELEASED; urgency=medium
 
   * New upstream release
+  * Update debian/copyright
 
  -- Dylan Aïssi <daissi@debian.org>  Thu, 02 Jul 2026 12:48:06 +0200
 

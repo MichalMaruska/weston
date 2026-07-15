@@ -1,3 +1,9 @@
+weston (16.0.0-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 15 Jul 2026 07:26:32 +0200
+
 weston (15.0.93-1) experimental; urgency=medium
 
   * New upstream release (RC1 release for 16.0.0)

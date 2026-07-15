@@ -1,8 +1,10 @@
-weston (16.0.0-1) UNRELEASED; urgency=medium
+weston (16.0.0-1) unstable; urgency=medium
 
   * New upstream release
+  * Adjust VCS fields in d/control and d/gbp.conf for unstable
+  * Upload to unstable
 
- -- Dylan Aïssi <daissi@debian.org>  Wed, 15 Jul 2026 07:26:32 +0200
+ -- Dylan Aïssi <daissi@debian.org>  Wed, 15 Jul 2026 08:02:03 +0200
 
 weston (15.0.93-1) experimental; urgency=medium
 
